@@ -1,4 +1,24 @@
-CyberShell
+                                          CyberShell v2.0 - Autonomous Bug Bounty & CTF Framework
+<p align="center">
+  <img src="https://img.shields.io/badge/version-2.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/python-3.8+-green.svg" alt="Python">
+  <img src="https://img.shields.io/badge/license-MIT-purple.svg" alt="License">
+  <img src="https://img.shields.io/badge/mode-offensive-red.svg" alt="Mode">
+</p>
+
+
+
+<p align="center">
+<pre>
+┌───────────────────────────────────────────────┐
+│ ~/cybershell                               ✦  |
+├───────────────────────────────────────────────┤
+│ $ _  CyberShell                               │
+│      research → plan → pivot                  │
+│      mapper • ODS • LLM                       │
+└───────────────────────────────────────────────┘
+</pre>
+</p>
 
 CyberShell is a modular, lab-safe research scaffold for authorized bug bounty workflows. It focuses on planning, reasoning, and evidence scoring—while real-world interaction and proof collection live in your plugins.
 
