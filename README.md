@@ -22,21 +22,6 @@
 
 # CyberShell v2.0 - Autonomous Bug Bounty & CTF Framework 🚀
 
-```
-┌───────────────────────────────────────────────┐
-│               ~/cybershell ✦                   |
-├───────────────────────────────────────────────┤
-│ $ _  CyberShell                                │
-│      research → plan → pivot                   │
-│      mapper • ODS • LLM • AI                   │
-│      ENHANCED WITH ML & AUTONOMY               │
-└───────────────────────────────────────────────┘
-```
-
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-2.0-green.svg)](https://github.com/CyberShellCode/CyberShell)
-
 ## 🎯 Overview
 
 CyberShell is an advanced autonomous exploitation framework designed for bug bounty hunting and CTF competitions. It combines intelligent planning, adaptive learning, and LLM-powered exploitation strategies to automatically discover and exploit vulnerabilities.
