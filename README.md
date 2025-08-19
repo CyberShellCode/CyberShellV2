@@ -20,7 +20,7 @@
 </pre>
 </p>
 
-# CyberShell v2.0 - Autonomous Bug Bounty & CTF Framework 🚀
+# CyberShell v2.0 - Autonomous Bug Bounty & CTF Framework
 
 ## 🎯 Overview
 
