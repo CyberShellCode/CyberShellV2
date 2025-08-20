@@ -10,10 +10,10 @@ readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [
-    {name = "CyberShell"},
+    {name = "CyberShellCode"},
 ]
 maintainers = [
-    {name = "CyberShell"},
+    {name = "CyberShellCode"},
 ]
 keywords = ["security", "bug-bounty", "ctf", "exploitation", "pentesting"]
 classifiers = [
