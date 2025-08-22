@@ -21,6 +21,8 @@ from .reporting import ReportBuilder
 from .agent import AutonomousBountyHunter, BountyConfig
 
 # New enhanced modules
+from cybershell.vulnerability_kb import VulnerabilityKBPlugin
+from cybershell.bypass_techniques import BypassPlugin
 from .continuous_learning_pipeline import ContinuousLearningPipeline, ExploitAttempt
 from .business_impact_reporter import BusinessImpactReporter, VulnerabilityFinding
 from .benchmarking_framework import BenchmarkingFramework, BenchmarkTarget, BenchmarkResult
