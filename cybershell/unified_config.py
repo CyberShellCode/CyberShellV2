@@ -65,6 +65,111 @@ class SafetyConfig:
         return False
 
 @dataclass
+class RateLimitConfig:
+    """Rate limiting configuration"""
+    enabled: bool = True
+    requests_per_second: float = 5.0  # Default 5 RPS as requested
+    burst_size: int = 10
+    adaptive_mode: bool = True  # Automatically adjust based on server response
+    
+    # Per-host custom limits (domain -> RPS)
+    per_host_limits: Dict[str, float] = field(default_factory=lambda: {
+        'github.com': 3.0,  # GitHub is strict
+        'localhost': 100.0,  # Local testing can be faster
+        '127.0.0.1': 100.0,
+        'bugcrowd.com': 2.0,  # Bug bounty platforms
+        'hackerone.com': 2.0,
+    })
+    
+    # Tool-specific limits
+    nmap_packets_per_second: int = 50
+    sqlmap_delay_seconds: float = 0.2  # 5 RPS = 0.2s delay
+    
+    # Advanced settings
+    respect_retry_after: bool = True  # Honor Retry-After headers
+    backoff_multiplier: float = 2.0  # Exponential backoff on 429
+    max_retries: int = 3
+    
+    # Monitoring
+    log_stats_interval: int = 60  # Log stats every 60 seconds
+    alert_on_block: bool = True  # Alert when requests are blocked
+
+@dataclass
+class VulnerabilityKBConfig:
+    """Vulnerability Knowledge Base configuration"""
+    kb_path: str = "knowledge_base"
+    auto_load_custom_payloads: bool = True
+    custom_payloads_dir: str = "knowledge_base/custom_payloads"
+    
+    # Payload management
+    min_confidence_threshold: float = 0.5
+    max_payloads_per_category: int = 1000
+    auto_update_confidence: bool = True
+    confidence_update_weight: float = 0.3  # Weight for new results vs historical
+    
+    # Categories to enable
+    enabled_categories: List[str] = field(default_factory=lambda: [
+        "XSS", "SQLI", "SSRF", "RCE", "IDOR", "XXE", 
+        "LFI", "RFI", "CSRF", "AUTH_BYPASS", "BUSINESS_LOGIC",
+        "REQUEST_SMUGGLING", "RACE_CONDITION", "INFO_DISCLOSURE"
+    ])
+    
+    # Payload priorities (higher = test first)
+    category_priorities: Dict[str, int] = field(default_factory=lambda: {
+        'RCE': 10,
+        'SQLI': 9,
+        'XXE': 8,
+        'SSRF': 7,
+        'LFI': 6,
+        'XSS': 5,
+        'IDOR': 4,
+        'BUSINESS_LOGIC': 3,
+        'INFO_DISCLOSURE': 2,
+        'CSRF': 1
+    })
+    
+    # Auto-save settings
+    auto_save_interval: int = 100  # Save KB after N updates
+    backup_on_save: bool = True
+    max_backups: int = 5
+
+@dataclass
+class BypassConfig:
+    """Bypass techniques configuration"""
+    enable_403_bypass: bool = True
+    enable_waf_bypass: bool = True
+    
+    # Bypass technique selection
+    bypass_categories: List[str] = field(default_factory=lambda: [
+        "PATH_MANIPULATION", "ENCODING", "HEADER_INJECTION",
+        "METHOD_OVERRIDE", "PROTOCOL_ABUSE", "PARSER_DIFFERENTIAL",
+        "UNICODE", "CASE_VARIATION"
+    ])
+    
+    # Learning settings
+    remember_successful_bypasses: bool = True
+    max_bypass_history: int = 1000
+    
+    # Attempt configuration
+    max_bypass_attempts_per_target: int = 50
+    stop_on_first_success: bool = False
+    
+    # Server-specific settings
+    target_server_detection: bool = True  # Auto-detect nginx/apache/iis
+    server_specific_techniques: Dict[str, List[str]] = field(default_factory=lambda: {
+        'nginx': ['PATH_MANIPULATION', 'UNICODE', 'HEADER_INJECTION'],
+        'apache': ['ENCODING', 'PATH_MANIPULATION', 'METHOD_OVERRIDE'],
+        'iis': ['UNICODE', 'CASE_VARIATION', 'ENCODING'],
+        'cloudflare': ['HEADER_INJECTION', 'ENCODING']
+    })
+    
+    # WAF evasion
+    encoding_chains_max_depth: int = 3
+    enable_chunking: bool = True
+    enable_case_variation: bool = True
+    enable_comment_injection: bool = True
+
+@dataclass
 class BountyConfig:
     """Bug bounty specific configuration"""
     target_domain: str
@@ -97,6 +202,11 @@ class ExploitationConfig:
     delay_between_attempts: float = 1.0
     prioritize_critical: bool = True
     skip_low_severity: bool = False
+    
+    # Integration with new modules
+    use_kb_payloads: bool = True  # Use vulnerability KB payloads
+    use_bypass_techniques: bool = True  # Use bypass techniques on 403/401
+    smart_payload_selection: bool = True  # AI-driven payload selection
 
 @dataclass
 class LLMConfig:
@@ -112,6 +222,11 @@ class LLMConfig:
     context_window: int = 32768
     enable_caching: bool = True
     cache_ttl: int = 3600
+    
+    # AI-enhanced features
+    generate_custom_payloads: bool = True
+    analyze_responses: bool = True
+    suggest_exploit_chains: bool = True
 
 @dataclass
 class LearningConfig:
@@ -126,6 +241,11 @@ class LearningConfig:
     enable_online_learning: bool = True
     batch_size: int = 32
     validation_split: float = 0.2
+    
+    # Knowledge base learning
+    update_payload_confidence: bool = True
+    update_bypass_success_rates: bool = True
+    track_exploitation_patterns: bool = True
 
 @dataclass
 class ReportingConfig:
@@ -140,6 +260,12 @@ class ReportingConfig:
     executive_summary: bool = True
     technical_details: bool = True
     generate_charts: bool = True
+    
+    # New reporting features
+    include_bypass_techniques_used: bool = True
+    include_payload_confidence_scores: bool = True
+    include_rate_limit_stats: bool = True
+    
     company_profile: Dict[str, Any] = field(default_factory=lambda: {
         'name': 'Target Organization',
         'industry': 'Technology',
@@ -228,6 +354,25 @@ class DebugConfig:
     save_payloads: bool = False
     trace_execution: bool = False
 
+@dataclass
+class IntegrationConfig:
+    """External tool integration configuration"""
+    enable_nmap: bool = True
+    nmap_path: str = "nmap"
+    nmap_default_args: str = "-sV -sC"
+    
+    enable_sqlmap: bool = True
+    sqlmap_path: str = "sqlmap"
+    sqlmap_default_args: str = "--batch --random-agent"
+    
+    enable_nuclei: bool = False
+    nuclei_path: str = "nuclei"
+    nuclei_templates: str = "nuclei-templates"
+    
+    # Tool coordination
+    tool_timeout: int = 600  # 10 minutes
+    max_concurrent_tools: int = 2
+
 # ============================================================================
 # MAIN UNIFIED CONFIGURATION
 # ============================================================================
@@ -241,6 +386,9 @@ class UnifiedConfig:
     
     # Core configurations
     safety: SafetyConfig = field(default_factory=SafetyConfig)
+    rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
+    vulnerability_kb: VulnerabilityKBConfig = field(default_factory=VulnerabilityKBConfig)
+    bypass: BypassConfig = field(default_factory=BypassConfig)
     bounty: BountyConfig = field(default_factory=lambda: BountyConfig(target_domain=""))
     exploitation: ExploitationConfig = field(default_factory=ExploitationConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
@@ -252,10 +400,38 @@ class UnifiedConfig:
     plugin: PluginConfig = field(default_factory=PluginConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
     debug: DebugConfig = field(default_factory=DebugConfig)
+    integration: IntegrationConfig = field(default_factory=IntegrationConfig)
     
     # Metadata
     version: str = "2.0.0"
     config_file: Optional[str] = None
+    
+    def get_rate_limiter(self):
+        """Get configured rate limiter instance"""
+        from cybershell.rate_limiter import RateLimiter
+        
+        if not hasattr(self, '_rate_limiter'):
+            self._rate_limiter = RateLimiter(
+                requests_per_second=self.rate_limit.requests_per_second,
+                burst_size=self.rate_limit.burst_size,
+                per_host_limits=self.rate_limit.per_host_limits
+            )
+            self._rate_limiter.adaptive_mode = self.rate_limit.adaptive_mode
+        
+        return self._rate_limiter
+    
+    def apply_rate_limiting(self):
+        """Apply rate limiting configuration globally"""
+        from cybershell.rate_limiter import configure_rate_limiting
+        
+        config = {
+            'requests_per_second': self.rate_limit.requests_per_second,
+            'burst_size': self.rate_limit.burst_size,
+            'per_host_limits': self.rate_limit.per_host_limits,
+            'adaptive_mode': self.rate_limit.adaptive_mode
+        }
+        
+        configure_rate_limiting(config)
     
     @classmethod
     def from_file(cls, config_file: str = "config.yaml") -> 'UnifiedConfig':
@@ -280,6 +456,12 @@ class UnifiedConfig:
         # Update each sub-configuration
         if 'safety' in data:
             config.safety = SafetyConfig(**data['safety'])
+        if 'rate_limit' in data:
+            config.rate_limit = RateLimitConfig(**data['rate_limit'])
+        if 'vulnerability_kb' in data:
+            config.vulnerability_kb = VulnerabilityKBConfig(**data['vulnerability_kb'])
+        if 'bypass' in data:
+            config.bypass = BypassConfig(**data['bypass'])
         if 'bounty' in data:
             config.bounty = BountyConfig(**data['bounty'])
         if 'exploitation' in data:
@@ -302,6 +484,8 @@ class UnifiedConfig:
             config.network = NetworkConfig(**data['network'])
         if 'debug' in data:
             config.debug = DebugConfig(**data['debug'])
+        if 'integration' in data:
+            config.integration = IntegrationConfig(**data['integration'])
         
         return config
     
@@ -330,6 +514,24 @@ class UnifiedConfig:
             config.safety.allow_production = args.production
             config.safety.allow_localhost = not args.production
             config.safety.allow_private_ranges = not args.production
+        
+        if hasattr(args, 'rate_limit'):
+            config.rate_limit.requests_per_second = args.rate_limit
+        
+        if hasattr(args, 'no_rate_limit'):
+            config.rate_limit.enabled = not args.no_rate_limit
+        
+        if hasattr(args, 'adaptive'):
+            config.rate_limit.adaptive_mode = args.adaptive
+        
+        if hasattr(args, 'burst'):
+            config.rate_limit.burst_size = args.burst
+        
+        if hasattr(args, 'bypass_403'):
+            config.bypass.enable_403_bypass = args.bypass_403
+        
+        if hasattr(args, 'bypass_waf'):
+            config.bypass.enable_waf_bypass = args.bypass_waf
         
         if hasattr(args, 'chain_exploits'):
             config.exploitation.chain_vulnerabilities = args.chain_exploits
@@ -395,6 +597,13 @@ class UnifiedConfig:
         if os.getenv('VERBOSE'):
             self.debug.verbose = os.getenv('VERBOSE').lower() in ('true', '1', 'yes')
         
+        # Rate limiting
+        if os.getenv('RATE_LIMIT'):
+            try:
+                self.rate_limit.requests_per_second = float(os.getenv('RATE_LIMIT'))
+            except ValueError:
+                pass
+        
         return self
     
     def to_dict(self) -> Dict[str, Any]:
@@ -432,9 +641,22 @@ class UnifiedConfig:
         if self.exploitation.min_cvss_for_exploit > 10.0 or self.exploitation.min_cvss_for_exploit < 0:
             issues.append("CVSS threshold must be between 0 and 10")
         
+        # Check rate limiting
+        if self.rate_limit.requests_per_second <= 0:
+            issues.append("Rate limit must be positive")
+        
+        if self.rate_limit.burst_size < 1:
+            issues.append("Burst size must be at least 1")
+        
         # Check paths
         if not Path(self.plugin.plugins_dir).exists():
             issues.append(f"Plugin directory {self.plugin.plugins_dir} does not exist")
+        
+        # Create knowledge base directory if it doesn't exist
+        kb_path = Path(self.vulnerability_kb.kb_path)
+        if not kb_path.exists():
+            kb_path.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Created knowledge base directory: {kb_path}")
         
         return issues
     
@@ -444,7 +666,7 @@ class UnifiedConfig:
     
     def __str__(self) -> str:
         """String representation of configuration"""
-        return f"UnifiedConfig(version={self.version}, target={self.bounty.target_domain})"
+        return f"UnifiedConfig(version={self.version}, target={self.bounty.target_domain}, rate_limit={self.rate_limit.requests_per_second}rps)"
 
 # ============================================================================
 # CONFIGURATION MANAGER
@@ -483,6 +705,11 @@ class ConfigurationManager:
         # Merge with environment variables
         self._config.merge_with_env()
         
+        # Apply rate limiting if enabled
+        if self._config.rate_limit.enabled:
+            self._config.apply_rate_limiting()
+            logger.info(f"Rate limiting enabled: {self._config.rate_limit.requests_per_second} RPS")
+        
         # Validate configuration
         issues = self._config.validate()
         if issues:
@@ -502,6 +729,10 @@ class ConfigurationManager:
         if self._config and self._config.config_file:
             self._config = UnifiedConfig.from_file(self._config.config_file)
             self._config.merge_with_env()
+            
+            # Re-apply rate limiting
+            if self._config.rate_limit.enabled:
+                self._config.apply_rate_limiting()
     
     def update(self, **kwargs):
         """Update specific configuration values"""
@@ -540,8 +771,12 @@ if __name__ == "__main__":
     parser.add_argument('--scope', help='Scope')
     parser.add_argument('--safe-mode', action='store_true')
     parser.add_argument('--production', action='store_true')
+    parser.add_argument('--rate-limit', type=float, default=5.0)
+    parser.add_argument('--no-rate-limit', action='store_true')
+    parser.add_argument('--bypass-403', action='store_true')
+    parser.add_argument('--bypass-waf', action='store_true')
     
-    args = parser.parse_args(['http://example.com', '--scope', '*.example.com'])
+    args = parser.parse_args(['http://example.com', '--scope', '*.example.com', '--rate-limit', '10'])
     
     # Initialize configuration
     config = initialize_config(args=args)
@@ -550,6 +785,9 @@ if __name__ == "__main__":
     print(f"Target: {config.bounty.target_domain}")
     print(f"Scope: {config.safety.scope_hosts}")
     print(f"Safe mode: {config.safety.safe_mode}")
+    print(f"Rate limit: {config.rate_limit.requests_per_second} RPS")
+    print(f"403 Bypass: {config.bypass.enable_403_bypass}")
+    print(f"WAF Bypass: {config.bypass.enable_waf_bypass}")
     
     # Check if target is in scope
     print(f"In scope: {config.safety.is_in_scope('http://example.com')}")
