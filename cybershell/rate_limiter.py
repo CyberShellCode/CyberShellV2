@@ -392,7 +392,7 @@ def make_rate_limited_request(request_func: Callable, *args, **kwargs):
         host = urlparse(url).netloc
     
     # Apply rate limiting
-    delay = rate_limiter.acquire(host=host)
+    rate_limiter.acquire(host=host)
     
     # Make request
     start_time = time.time()
