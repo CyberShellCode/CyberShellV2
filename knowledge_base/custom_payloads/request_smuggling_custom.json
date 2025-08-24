@@ -711,12 +711,17 @@
       "metadata": {}
     },
     {
+    {
       "category": "REQUEST_SMUGGLING",
       "name": "REQUEST_SMUGGLING Transfer-Encoding:[tab]chunked [d33c91f3]",
-      "payload": "Transfer-Encoding:[tab]chunked",
+      "payload": "Transfer-Encoding:\tchunked",
       "description": "HTTP request desynchronization / smuggling vector",
       "confidence_score": 0.7,
       "context": "raw-http",
+      "placeholders": {
+       "[tab]": "\\t"
+     },
+     "regex_flags": "m",
       "detection_pattern": "Transfer\\-Encoding:\\[tab\\]chunked",
       "tags": [
         "generic"
