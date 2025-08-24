@@ -119,7 +119,7 @@ make install-all        # Everything
 ## 📁 Project Structure
 
 ```
-cybershell/
+cybershellV2/
 ├── models/                             # ML models and training data
 │   └── adaptive/                       # Adaptive learning models
 ├── reports/                            # Generated reports
