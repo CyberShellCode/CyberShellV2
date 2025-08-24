@@ -140,11 +140,11 @@ cybershell/
 │   │   ├── mapper.py
 │   │   ├── miner.py
 │   │   └── ods.py
-│   ├── continuous_learning_pipeline.py # NEW: ML training pipeline
-│   ├── business_impact_reporter.py     # NEW: Business reporting
-│   ├── benchmarking_framework.py       # NEW: Performance benchmarking
-│   ├── advanced_ai_orchestrator.py     # NEW: Multi-model AI
-│   ├── autonomous_orchestration_engine.py # NEW: True autonomy
+│   ├── continuous_learning_pipeline.py # ML training pipeline
+│   ├── business_impact_reporter.py     # Business reporting
+│   ├── benchmarking_framework.py       # Performance benchmarking
+│   ├── advanced_ai_orchestrator.py     # Multi-model AI
+│   ├── autonomous_orchestration_engine.py # True autonomy
 │   └── validation_framework.py         # NEW: Validation system
 ├── plugins_user/                        # User plugins directory
 │   ├── exploitation_plugins.py         # Main exploit plugins
