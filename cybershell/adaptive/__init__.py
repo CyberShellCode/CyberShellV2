@@ -1,1 +1,1 @@
-__all__ = ['signals','mapper','train','persistence','hitl','statemachine','metrics']
+__all__ = ['signals', 'mapper', 'train', 'persistence', 'hitl', 'statemachine', 'metrics']
