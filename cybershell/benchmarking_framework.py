@@ -366,7 +366,8 @@ class BenchmarkingFramework:
         
         # Efficiency score (resource usage)
         cpu_efficiency = 1 - (resources['avg_cpu'] / 100)
-        memory_efficiency = 1 - min(1.0, resources['max_memory'] / 4096)
+        mem_cap = float(self.config['performance_thresholds'].get('max_memory', 4096))
+        memory_efficiency = 1 - min(1.0, resources['max_memory'] / mem_cap)                                
         efficiency_score = (cpu_efficiency + memory_efficiency) / 2
         
         total_score = (
@@ -384,11 +385,11 @@ class BenchmarkingFramework:
             'summary': {
                 'total_targets': len(results),
                 'successful_targets': sum(1 for r in results if r.success_rate > 0.5),
-                'average_duration': statistics.mean([r.duration for r in results]),
+                'average_duration': statistics.mean([r.duration for r in results]) if results else 0.0,
                 'total_vulnerabilities': sum(r.vulnerabilities_found for r in results),
-                'average_f1_score': statistics.mean([r.f1_score for r in results]),
-                'average_cpu': statistics.mean([r.cpu_usage for r in results]),
-                'average_memory': statistics.mean([r.memory_usage for r in results])
+                'average_f1_score': statistics.mean([r.f1_score for r in results]) if results else 0.0,
+                'average_cpu': statistics.mean([r.cpu_usage for r in results]) if results else 0.0,
+                'average_memory': statistics.mean([r.memory_usage for r in results]) if results else 0.0
             },
             'by_category': self._analyze_by_category(results),
             'by_difficulty': self._analyze_by_difficulty(results),
