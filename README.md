@@ -135,11 +135,13 @@ cybershell/
 │   ├── llm_connectors.py               # LLM integrations
 │   ├── config.py                       # Configuration management
 │   ├── reporting.py                    # Report generation
-│   ├── adaptive/                       # Adaptive learning module
+│   ├── adaptive/                       # Adaptive learning modules
 │   │   ├── __init__.py
-│   │   ├── mapper.py
-│   │   ├── miner.py
-│   │   └── ods.py
+│   │   ├── hitl.py
+│   │   ├── metrics.py
+│   │   ├── persistence.py
+│   │   ├── statemachine.py
+│   │   └── train.py
 │   ├── continuous_learning_pipeline.py    # ML training pipeline
 │   ├── business_impact_reporter.py        # Business reporting
 │   ├── benchmarking_framework.py          # Performance benchmarking
@@ -157,7 +159,6 @@ cybershell/
 ├── docs/                                  # Documentation
 ├── tests/                                 # Test suite
 ├── __main__.py                            # Main entry point
-├── main.py                                # Legacy entry point
 ├── run_ctf.py                             # CTF helper script
 ├── requirements.txt                       # Python dependencies
 ├── requirements-llm.txt                   # LLM dependencies
