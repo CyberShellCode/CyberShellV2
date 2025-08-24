@@ -295,17 +295,17 @@ class OutcomeDirectedSearch:
         if not result.get('success'):
             return
         
-        details = result.get('details', {})
+        details = result.get('details') or {}
         
         # Check for discovered vulnerabilities
-        if details.get('vulnerable') or details.get('confidence', 0) > 0.5:
+        if isinstance(details, dict) and (details.get('vulnerable') or details.get('confidence', 0) > 0.5):
             vuln_type = self._identify_vuln_type(result)
             confidence = details.get('confidence', details.get('evidence_score', 0.5))
             
             self.state.add_vulnerability(vuln_type, confidence, details)
         
         # Check for successful exploitation
-        if details.get('exploited') or details.get('impact_proof'):
+        if isinstance(details, dict) and (details.get('exploited') or details.get('impact_proof')):
             vuln_type = self._identify_vuln_type(result)
             impact = details.get('evidence_score', 0.7)
             
