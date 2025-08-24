@@ -161,7 +161,7 @@ class RateLimiter:
             self.default_rps = original_rps
             self.update_async_limiter_rate()  # Restore async limiter rate
     
-    def adjust_adaptive(self, response_time: float, error_occurred: bool = False):
+    def adjust_adaptive(self, response_time: float, *, error_occurred: bool = False):
         """
         Adaptive rate limiting based on server response
         
