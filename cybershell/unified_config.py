@@ -610,10 +610,10 @@ class UnifiedConfig:
         """Convert configuration to dictionary"""
         return asdict(self)
     
-    def save(self, config_file: Optional[str] = None):
+    def save(self, config_file: Optional[str] = None) -> None:
         """Save configuration to YAML file"""
         config_file = config_file or self.config_file or "config.yaml"
-        
+        Path(config_file).parent.mkdir(parents=True, exist_ok=True)
         with open(config_file, 'w') as f:
             yaml.dump(self.to_dict(), f, default_flow_style=False, sort_keys=False)
         
