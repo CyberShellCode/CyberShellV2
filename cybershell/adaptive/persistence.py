@@ -1,7 +1,8 @@
 
 from dataclasses import dataclass
 from typing import Any
-import joblib, os
+import os
+import joblib
 @dataclass
 class ModelStore:
     path: str = "cybershell_mapper.joblib"
