@@ -11,6 +11,11 @@ import hashlib
 import re
 from enum import Enum
 
+# NEW: Import payload management
+from .payload_manager import PayloadManager, RankedPayload
+from .vulnerability_kb import VulnerabilityKnowledgeBase, VulnCategory
+from .fingerprinter import TargetFingerprint
+
 class ModelCapability(Enum):
     """Capabilities of different AI models"""
     CODE_GENERATION = "code_generation"
@@ -44,10 +49,12 @@ class ContextWindow:
     vulnerability_context: Dict
     target_profile: Dict
     exploitation_history: List[Dict]
+    fingerprint_data: Optional[Dict] = None  # NEW
     
 class AdvancedAIOrchestrator:
     """
     Orchestrates multiple AI models for optimal exploitation strategies
+    Now with fingerprint-aware payload generation
     """
     
     def __init__(self, config: Optional[Dict] = None):
@@ -59,6 +66,10 @@ class AdvancedAIOrchestrator:
         self.response_cache = {}
         self.performance_tracker = PerformanceTracker()
         
+        # NEW: Initialize payload management
+        self.kb = VulnerabilityKnowledgeBase()
+        self.payload_manager = PayloadManager(self.kb)
+        
     def _default_config(self) -> Dict:
         """Default configuration for AI orchestration"""
         return {
@@ -69,7 +80,8 @@ class AdvancedAIOrchestrator:
             'ensemble_voting': True,
             'prompt_optimization': True,
             'max_retries': 3,
-            'temperature_range': (0.1, 0.9)
+            'temperature_range': (0.1, 0.9),
+            'use_fingerprint_context': True  # NEW
         }
     
     def _initialize_models(self) -> Dict[str, AIModel]:
@@ -140,7 +152,17 @@ class AdvancedAIOrchestrator:
                                       target: str,
                                       vulnerability_type: str,
                                       context: Dict) -> Dict:
-        """Orchestrate multiple models for exploitation"""
+        """Orchestrate multiple models for exploitation with fingerprint awareness"""
+        
+        # Extract fingerprint data if available
+        target_info = context.get('target_info', {})
+        fingerprint_data = {
+            'product': target_info.get('product'),
+            'version': target_info.get('version'),
+            'technologies': target_info.get('technologies', []),
+            'waf': target_info.get('waf'),
+            'server': target_info.get('server')
+        }
         
         # Select best models for the task
         selected_models = self.model_selector.select_models(
@@ -152,12 +174,25 @@ class AdvancedAIOrchestrator:
             max_models=self.config['max_parallel_models']
         )
         
-        # Prepare context
+        # Prepare context with fingerprint
         enriched_context = self.context_manager.prepare_context(
             target=target,
             vulnerability_type=vulnerability_type,
-            base_context=context
+            base_context=context,
+            fingerprint=fingerprint_data  # NEW
         )
+        
+        # Get version-specific payloads from knowledge base
+        if vulnerability_type != 'AUTO':
+            try:
+                vuln_category = VulnCategory[vulnerability_type.upper()]
+                kb_payloads = self._get_fingerprint_matched_payloads(
+                    vuln_category,
+                    fingerprint_data
+                )
+                enriched_context['suggested_payloads'] = kb_payloads
+            except:
+                pass
         
         # Generate optimized prompts for each model
         prompts = {}
@@ -165,14 +200,15 @@ class AdvancedAIOrchestrator:
             prompts[model_name] = self.prompt_optimizer.optimize_prompt(
                 model=model,
                 task=vulnerability_type,
-                context=enriched_context
+                context=enriched_context,
+                fingerprint=fingerprint_data  # NEW
             )
         
         # Execute parallel model queries
         results = await self._parallel_model_execution(selected_models, prompts)
         
         # Ensemble and synthesize results
-        final_result = self._ensemble_results(results, vulnerability_type)
+        final_result = self._ensemble_results(results, vulnerability_type, fingerprint_data)
         
         # Update performance tracking
         self.performance_tracker.record_execution(
@@ -183,6 +219,30 @@ class AdvancedAIOrchestrator:
         )
         
         return final_result
+    
+    def _get_fingerprint_matched_payloads(self, 
+                                         vuln_category: VulnCategory,
+                                         fingerprint: Dict) -> List[str]:
+        """Get payloads matching the target fingerprint"""
+        # Create mock fingerprint object for payload manager
+        from .fingerprinter import TargetFingerprint
+        mock_fp = TargetFingerprint(
+            url="",
+            product=fingerprint.get('product'),
+            version=fingerprint.get('version'),
+            technologies=fingerprint.get('technologies', []),
+            server=fingerprint.get('server')
+        )
+        
+        # Get ranked payloads
+        ranked = self.payload_manager.select_payloads(
+            fingerprint=mock_fp,
+            vulnerability=vuln_category,
+            context=None,
+            top_n=5
+        )
+        
+        return [rp.payload.payload for rp in ranked]
     
     async def _parallel_model_execution(self, 
                                        models: Dict[str, AIModel],
@@ -289,8 +349,8 @@ class AdvancedAIOrchestrator:
         # In reality, would load and run local model
         return f"Local model response for: {prompt[:50]}..."
     
-    def _ensemble_results(self, results: Dict, task: str) -> Dict:
-        """Ensemble results from multiple models"""
+    def _ensemble_results(self, results: Dict, task: str, fingerprint: Dict) -> Dict:
+        """Ensemble results from multiple models with fingerprint consideration"""
         
         valid_results = [r for r in results.values() if r is not None]
         
@@ -303,7 +363,7 @@ class AdvancedAIOrchestrator:
         
         if self.config['ensemble_voting']:
             # Voting-based ensemble
-            synthesized = self._voting_ensemble(valid_results, task)
+            synthesized = self._voting_ensemble(valid_results, task, fingerprint)
         else:
             # Confidence-weighted ensemble
             synthesized = self._weighted_ensemble(valid_results)
@@ -315,11 +375,12 @@ class AdvancedAIOrchestrator:
             'confidence': synthesized['confidence'],
             'model_consensus': synthesized['consensus'],
             'latency': max([r['latency_ms'] for r in valid_results]),
-            'models_used': [r['model'] for r in valid_results]
+            'models_used': [r['model'] for r in valid_results],
+            'fingerprint_match': synthesized.get('fingerprint_match', False)  # NEW
         }
     
-    def _voting_ensemble(self, results: List[Dict], task: str) -> Dict:
-        """Voting-based ensemble strategy"""
+    def _voting_ensemble(self, results: List[Dict], task: str, fingerprint: Dict) -> Dict:
+        """Voting-based ensemble strategy with fingerprint awareness"""
         
         # Extract strategies from each model
         strategies = []
@@ -343,11 +404,19 @@ class AdvancedAIOrchestrator:
         # Select strategy with most votes
         best_strategy = max(strategy_votes.items(), key=lambda x: len(x[1]))
         
+        # Generate payload considering fingerprint
+        payload = self._generate_fingerprint_aware_payload(
+            best_strategy[0], 
+            task, 
+            fingerprint
+        )
+        
         return {
             'strategy': best_strategy[0],
-            'payload': self._generate_payload(best_strategy[0], task),
+            'payload': payload,
             'confidence': np.mean([s['confidence'] for s in best_strategy[1]]),
-            'consensus': len(best_strategy[1]) / len(results)
+            'consensus': len(best_strategy[1]) / len(results),
+            'fingerprint_match': fingerprint.get('product') is not None
         }
     
     def _weighted_ensemble(self, results: List[Dict]) -> Dict:
@@ -381,6 +450,30 @@ class AdvancedAIOrchestrator:
             'confidence': best['normalized_weight'],
             'consensus': best['normalized_weight']
         }
+    
+    def _generate_fingerprint_aware_payload(self, strategy: str, task: str, fingerprint: Dict) -> str:
+        """Generate payload considering target fingerprint"""
+        
+        # If we have product/version, get specific payload
+        if fingerprint.get('product'):
+            try:
+                vuln_category = VulnCategory[task.upper()] if task != 'weighted' else VulnCategory.XSS
+                
+                # Get payloads from KB
+                product_payloads = self.kb.get_payloads_by_product(
+                    fingerprint['product'],
+                    fingerprint.get('version')
+                )
+                
+                if product_payloads:
+                    # Return highest confidence payload
+                    best = max(product_payloads, key=lambda p: p.confidence_score)
+                    return best.payload
+            except:
+                pass
+        
+        # Fallback to generic payload
+        return self._generate_payload(strategy, task)
     
     def _extract_strategy(self, response: str) -> str:
         """Extract exploitation strategy from model response"""
@@ -421,8 +514,9 @@ class AdvancedAIOrchestrator:
     async def generate_adaptive_payload(self, 
                                        vulnerability: str,
                                        target_response: str,
-                                       previous_attempts: List[Dict]) -> Dict:
-        """Generate adaptive payload based on previous attempts"""
+                                       previous_attempts: List[Dict],
+                                       target_info: Optional[Dict] = None) -> Dict:
+        """Generate adaptive payload based on previous attempts and fingerprint"""
         
         # Analyze previous attempts
         analysis = self._analyze_attempts(previous_attempts)
@@ -433,23 +527,63 @@ class AdvancedAIOrchestrator:
             context={'vulnerability': vulnerability, 'attempts': len(previous_attempts)}
         )
         
+        # Get alternative payloads from KB if we have fingerprint
+        kb_alternatives = []
+        if target_info and target_info.get('product'):
+            try:
+                from .fingerprinter import TargetFingerprint
+                mock_fp = TargetFingerprint(
+                    url="",
+                    product=target_info.get('product'),
+                    version=target_info.get('version')
+                )
+                
+                vuln_category = VulnCategory[vulnerability.upper()]
+                
+                # Get failed payloads
+                failed_payloads = [
+                    self.kb.search_payloads(att['payload'])[0] 
+                    for att in previous_attempts 
+                    if not att.get('success', False)
+                ]
+                
+                # Get adaptive payloads
+                adaptive = self.payload_manager.get_adaptive_payloads(
+                    fingerprint=mock_fp,
+                    failed_payloads=failed_payloads,
+                    vulnerability=vuln_category
+                )
+                
+                kb_alternatives = [rp.payload.payload for rp in adaptive[:3]]
+            except:
+                pass
+        
         # Generate context-aware prompt
         prompt = self.prompt_optimizer.create_adaptive_prompt(
             vulnerability=vulnerability,
             target_response=target_response,
             failure_patterns=analysis['failure_patterns'],
-            successful_patterns=analysis['successful_patterns']
+            successful_patterns=analysis['successful_patterns'],
+            target_info=target_info,
+            kb_alternatives=kb_alternatives  # NEW: Include KB suggestions
         )
         
         # Execute model
         result = await self._execute_model(model, prompt)
         
         # Parse and return payload
+        payload = self._extract_payload(result['response'])
+        
+        # If AI didn't generate good payload, use KB alternative
+        if not payload and kb_alternatives:
+            payload = kb_alternatives[0]
+        
         return {
-            'payload': self._extract_payload(result['response']),
+            'payload': payload,
             'technique': analysis['recommended_technique'],
             'confidence': result['confidence'],
-            'model_used': model.name
+            'model_used': model.name,
+            'fingerprint_aware': target_info is not None
         }
     
     def _analyze_attempts(self, attempts: List[Dict]) -> Dict:
@@ -509,14 +643,15 @@ class AdvancedAIOrchestrator:
 
 
 class ContextManager:
-    """Manages context across AI interactions"""
+    """Manages context across AI interactions with fingerprint support"""
     
     def __init__(self, max_context_size: int = 32000):
         self.max_context_size = max_context_size
         self.context_windows = {}
         self.global_facts = []
         
-    def prepare_context(self, target: str, vulnerability_type: str, base_context: Dict) -> Dict:
+    def prepare_context(self, target: str, vulnerability_type: str, 
+                       base_context: Dict, fingerprint: Optional[Dict] = None) -> Dict:
         """Prepare enriched context for AI models"""
         
         # Initialize or retrieve context window
@@ -529,7 +664,8 @@ class ContextManager:
                 key_facts=[],
                 vulnerability_context={},
                 target_profile={},
-                exploitation_history=[]
+                exploitation_history=[],
+                fingerprint_data=fingerprint  # NEW
             )
         
         window = self.context_windows[context_key]
@@ -540,6 +676,19 @@ class ContextManager:
             'target': target,
             'timestamp': datetime.now().isoformat()
         })
+        
+        # Add fingerprint data to context
+        if fingerprint:
+            window.fingerprint_data = fingerprint
+            window.key_facts.append({
+                'fact': f"Target is {fingerprint.get('product', 'unknown')} {fingerprint.get('version', '')}",
+                'confidence': 0.9
+            })
+            if fingerprint.get('waf'):
+                window.key_facts.append({
+                    'fact': f"WAF detected: {fingerprint['waf']}",
+                    'confidence': 0.85
+                })
         
         # Add base context
         window.target_profile.update(base_context)
@@ -552,7 +701,8 @@ class ContextManager:
             'vulnerability': window.vulnerability_context,
             'target': window.target_profile,
             'key_facts': window.key_facts + self.global_facts,
-            'history': window.exploitation_history[-10:]  # Last 10 attempts
+            'history': window.exploitation_history[-10:],  # Last 10 attempts
+            'fingerprint': window.fingerprint_data  # NEW
         }
     
     def _compress_context(self, window: ContextWindow):
@@ -572,7 +722,8 @@ class ContextManager:
             'facts': window.key_facts,
             'context': window.vulnerability_context,
             'profile': window.target_profile,
-            'history': window.exploitation_history
+            'history': window.exploitation_history,
+            'fingerprint': window.fingerprint_data
         })) // 4  # Rough token estimate
     
     def update_with_result(self, target: str, vulnerability_type: str, result: Dict):
@@ -586,7 +737,8 @@ class ContextManager:
             window.exploitation_history.append({
                 'timestamp': datetime.now().isoformat(),
                 'success': result.get('success', False),
-                'technique': result.get('technique', 'unknown')
+                'technique': result.get('technique', 'unknown'),
+                'fingerprint_match': result.get('fingerprint_match', False)  # NEW
             })
             
             # Extract key facts from successful attempts
@@ -598,7 +750,7 @@ class ContextManager:
 
 
 class PromptOptimizer:
-    """Optimizes prompts for different AI models"""
+    """Optimizes prompts for different AI models with fingerprint context"""
     
     def __init__(self):
         self.prompt_templates = self._load_templates()
@@ -610,42 +762,56 @@ class PromptOptimizer:
             'vulnerability_analysis': """
                 Analyze the following target for {vulnerability_type} vulnerabilities:
                 Target: {target}
+                Product: {product}
+                Version: {version}
                 Context: {context}
                 
                 Provide detailed analysis including:
                 1. Vulnerability indicators
                 2. Exploitation vectors
-                3. Recommended payloads
+                3. Recommended payloads (consider the product/version)
                 4. Success probability
             """,
             'payload_crafting': """
                 Create an optimized payload for {vulnerability_type}:
+                Target Product: {product} {version}
                 Target characteristics: {target_profile}
                 Previous attempts: {attempts}
+                KB suggestions: {kb_alternatives}
                 
                 Generate a payload that:
-                1. Evades common filters
-                2. Maximizes success probability
-                3. Minimizes detection
+                1. Is specific to {product} {version}
+                2. Evades common filters
+                3. Maximizes success probability
+                4. Minimizes detection
             """,
             'strategic_planning': """
                 Develop exploitation strategy for:
                 Target: {target}
+                Fingerprint: {fingerprint}
                 Vulnerabilities found: {vulnerabilities}
                 
                 Provide:
                 1. Prioritized exploitation order
-                2. Chaining opportunities
-                3. Risk assessment
-                4. Expected outcomes
+                2. Product-specific techniques
+                3. Chaining opportunities
+                4. Risk assessment
+                5. Expected outcomes
             """
         }
     
-    def optimize_prompt(self, model: AIModel, task: str, context: Dict) -> str:
-        """Optimize prompt for specific model and task"""
+    def optimize_prompt(self, model: AIModel, task: str, context: Dict, 
+                       fingerprint: Optional[Dict] = None) -> str:
+        """Optimize prompt for specific model and task with fingerprint"""
         
         # Get base template
         template = self.prompt_templates.get(task, self.prompt_templates['vulnerability_analysis'])
+        
+        # Add fingerprint data to context
+        if fingerprint:
+            context['product'] = fingerprint.get('product', 'unknown')
+            context['version'] = fingerprint.get('version', 'unknown')
+            context['fingerprint'] = json.dumps(fingerprint)
         
         # Apply model-specific optimizations
         if model.provider == 'ollama':
@@ -700,12 +866,21 @@ class PromptOptimizer:
         return prompt
     
     def create_adaptive_prompt(self, **kwargs) -> str:
-        """Create adaptive prompt based on context"""
+        """Create adaptive prompt based on context with fingerprint"""
         
         base_prompt = "Generate an adaptive exploitation strategy.\n"
         
         if 'vulnerability' in kwargs:
             base_prompt += f"Vulnerability: {kwargs['vulnerability']}\n"
+        
+        if 'target_info' in kwargs and kwargs['target_info']:
+            info = kwargs['target_info']
+            base_prompt += f"Target: {info.get('product', 'unknown')} {info.get('version', '')}\n"
+            if info.get('technologies'):
+                base_prompt += f"Technologies: {', '.join(info['technologies'])}\n"
+        
+        if 'kb_alternatives' in kwargs and kwargs['kb_alternatives']:
+            base_prompt += f"Consider these KB payloads: {kwargs['kb_alternatives'][:3]}\n"
         
         if 'failure_patterns' in kwargs:
             base_prompt += f"Avoid patterns: {kwargs['failure_patterns']}\n"
