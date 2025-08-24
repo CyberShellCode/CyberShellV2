@@ -1,0 +1,233 @@
+# CyberShellV2 Configuration
+# Advanced Autonomous Exploitation Framework
+
+# Fingerprinting Configuration
+fingerprinting:
+  enable: true
+  aggressive: false  # Light fingerprinting by default
+  use_external_tools: false  # Integrate with whatweb/wappalyzer
+  cache_ttl: 300  # Cache fingerprints for 5 minutes
+  timeout: 10  # Request timeout in seconds
+  
+  # Fingerprinting scope
+  endpoints_to_check:
+    - /robots.txt
+    - /sitemap.xml
+    - /.git/config
+    - /package.json
+    - /composer.json
+    - /wp-login.php
+    - /api
+    - /.well-known/security.txt
+
+# Payload Selection Configuration
+payload_selection:
+  enabled: true
+  prefer_version_specific: true  # Prioritize version-specific payloads
+  
+  # Scoring weights for payload selection
+  weights:
+    version_weight: 0.35  # Product/version match importance
+    pattern_weight: 0.25  # Detection pattern match
+    confidence_weight: 0.20  # Base confidence from KB
+    tag_weight: 0.10  # Tag relevance
+    context_weight: 0.05  # Context appropriateness
+    history_weight: 0.05  # Historical success rate
+  
+  min_score: 0.3  # Minimum score to include payload
+  top_n: 5  # Number of payloads to select
+  enable_caching: true
+  cache_ttl: 300
+
+# Safety Configuration
+safety:
+  scope_hosts:
+    - "*.target.com"
+    - "api.target.com"
+    - "app.target.com"
+  
+  out_of_scope_patterns:
+    - "admin.target.com"
+    - "internal."
+    - "staging."
+  
+  localhost_allowed: false
+  private_ranges_allowed: false
+  
+  rate_limiting:
+    enabled: true
+    requests_per_second: 10
+    burst_size: 20
+
+# Exploitation Configuration
+exploitation:
+  aggressive_mode: false  # Safe mode by default
+  max_parallel_exploits: 5
+  exploitation_timeout: 300
+  request_timeout: 10
+  
+  # Vulnerability priorities (based on HackerOne data)
+  priority_order:
+    - XSS  # Most common
+    - INFO_DISCLOSURE
+    - ACCESS_CONTROL
+    - SQLI
+    - SSRF
+    - RCE  # Most critical
+  
+  # Payload behavior
+  use_custom_payloads: true
+  payload_obfuscation: true
+  encoding_methods:
+    - url
+    - html
+    - unicode
+    - base64
+
+# Learning Configuration
+learning:
+  enable_continuous_learning: true
+  model_dir: "./models"
+  learning_rate: 0.001
+  exploration_rate: 0.1
+  
+  # Adaptive learning from fingerprints
+  learn_from_fingerprints: true
+  fingerprint_features:
+    - product
+    - version
+    - technologies
+    - waf
+    - server
+  
+  # Update confidence based on success
+  update_kb_confidence: true
+  success_weight: 0.9
+  failure_weight: 0.3
+
+# LLM Configuration
+llm:
+  provider: ollama  # ollama, openai, anthropic, none
+  model: dolphin-mixtral:8x7b
+  base_url: http://localhost:11434
+  api_key: null
+  
+  # Fingerprint-aware prompting
+  include_fingerprint_in_prompt: true
+  suggest_version_specific_payloads: true
+
+# Reporting Configuration
+reporting:
+  output_dir: "./reports"
+  format: json  # json, markdown, html
+  include_fingerprints: true
+  include_payload_rankings: true
+  
+  company_profile:
+    name: "Security Corp"
+    industry: "Technology"
+    compliance: ["SOC2", "ISO27001"]
+
+# Autonomy Configuration
+autonomy:
+  enable_autonomy: true
+  max_autonomous_actions: 100
+  decision_timeout: 30
+  
+  # Fingerprint-based decision making
+  adapt_strategy_to_fingerprint: true
+  prioritize_known_vulnerabilities: true
+
+# Validation Configuration
+validation:
+  min_confidence_threshold: 0.7
+  require_multiple_evidence: true
+  max_validation_attempts: 3
+  
+  # Validate against fingerprint
+  check_version_specific_vulns: true
+  verify_product_signatures: true
+
+# Benchmarking Configuration
+benchmarking:
+  enable_benchmarking: false
+  comparison_tools:
+    - burp
+    - zap
+    - nuclei
+  
+  metrics:
+    - detection_rate
+    - false_positive_rate
+    - exploitation_success
+    - time_to_exploit
+
+# Plugin Configuration
+plugin:
+  enable_user_plugins: true
+  plugins_dir: "./plugins_user"
+  
+  # Fingerprint-aware plugins
+  pass_fingerprint_to_plugins: true
+  plugin_whitelist: []
+  plugin_blacklist: []
+
+# Knowledge Base Configuration
+knowledge_base:
+  kb_path: "./knowledge_base"
+  
+  # Custom payload directories
+  custom_payloads:
+    - ./knowledge_base/custom_payloads/xss_custom.json
+    - ./knowledge_base/custom_payloads/sqli_custom.json
+    - ./knowledge_base/custom_payloads/ssrf_custom.yaml
+  
+  # Auto-update from exploitation results
+  auto_update: true
+  update_frequency: "after_each_scan"
+  
+  # Product-specific payload sources
+  payload_sources:
+    wordpress:
+      - ./knowledge_base/wordpress_payloads.json
+    nginx:
+      - ./knowledge_base/nginx_payloads.json
+    apache:
+      - ./knowledge_base/apache_payloads.json
+
+# Advanced Features
+advanced:
+  # Fingerprint caching
+  fingerprint_cache:
+    enabled: true
+    max_size: 1000
+    ttl: 3600
+  
+  # Adaptive payload generation
+  adaptive_payloads:
+    enabled: true
+    max_iterations: 5
+    mutation_rate: 0.2
+  
+  # WAF evasion based on fingerprint
+  waf_evasion:
+    enabled: true
+    detect_waf: true
+    adapt_payloads_to_waf: true
+    evasion_techniques:
+      cloudflare:
+        - unicode_encoding
+        - parameter_pollution
+      aws_waf:
+        - chunked_encoding
+        - case_variation
+
+# Logging Configuration
+logging:
+  level: INFO
+  file: "./logs/cybershell.log"
+  
+  # Log fingerprinting results
+  log_fingerprints: true
+  log_payload_selection: true
+  log_exploitation_attempts: true
