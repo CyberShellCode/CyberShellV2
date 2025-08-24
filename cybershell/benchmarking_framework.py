@@ -221,7 +221,7 @@ class BenchmarkingFramework:
         # Initialize metrics collection
         metrics_collector = MetricsCollector()
         metrics_task = asyncio.create_task(
-            metrics_collector.collect_metrics(self.config['collect_metrics_interval'])
+        metrics_collector.collect_metrics(self.config['collect_metrics_interval'])
         )
         
         try:
@@ -229,9 +229,13 @@ class BenchmarkingFramework:
             exploitation_result = await self._run_exploitation(target)
             
             # Stop metrics collection
+            metrics_collector.collecting = False
             metrics_task.cancel()
-            await asyncio.sleep(0.1)  # Let it finish cleanly
-            
+            try:
+                await metrics_task
+            except asyncio.CancelledError:
+                pass
+                
             end_time = datetime.now()
             duration = (end_time - start_time).total_seconds()
             
