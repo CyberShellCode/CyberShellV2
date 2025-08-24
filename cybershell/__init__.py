@@ -1,3 +1,17 @@
+"""
+CyberShellV2 - Advanced Autonomous Exploitation Framework
+=========================================================
+A comprehensive security testing framework for authorized bug bounty hunting 
+and CTF competitions with ML-powered continuous learning capabilities.
+
+Author: CyberShellCode
+License: MIT (for authorized security testing only)
+"""
+
+__version__ = "2.0.0"
+__author__ = "CyberShellCode"
+__license__ = "MIT"
+
 # Core modules
 from . import orchestrator
 from . import agent
@@ -120,7 +134,7 @@ def check_dependencies():
             missing.append(package)
     
     if missing:
-        print(f"  Missing dependencies: {', '.join(missing)}")
+        print(f"⚠️  Missing dependencies: {', '.join(missing)}")
         print(f"   Install with: pip install {' '.join(missing)}")
         return False
     return True
