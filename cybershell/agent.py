@@ -1,10 +1,12 @@
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List
 from enum import Enum
-import time, json, os, uuid, hashlib
+import json
+import uuid
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 import concurrent.futures
+from cybershell.unified_config import BountyConfig
 
 class ExploitPhase(Enum):
     RECON = "reconnaissance"
@@ -25,29 +27,6 @@ class VulnerabilityFinding:
     cwe_id: Optional[str] = None
     remediation: Optional[str] = None
     reproducible: bool = False
-    
-@dataclass
-class BountyConfig:
-    target_domain: str
-    scope: List[str]  # In-scope domains/endpoints
-    out_of_scope: List[str] = field(default_factory=list)
-    max_severity_allowed: str = "Critical"  # For responsible disclosure
-    
-    # Exploitation parameters
-    aggressive_mode: bool = True  # Full exploitation for PoC
-    chain_vulnerabilities: bool = True  # Combine vulns for impact
-    extract_data_samples: bool = True  # Prove data access
-    persistence_testing: bool = False  # Usually out of scope
-    
-    # Agent behavior
-    max_parallel_exploits: int = 5
-    evidence_collection_level: str = "comprehensive"  # minimal/standard/comprehensive
-    auto_generate_reports: bool = True
-    
-    # Thresholds
-    min_cvss_for_exploit: float = 4.0
-    confidence_threshold: float = 0.75
-    false_positive_tolerance: float = 0.05
 
 @dataclass
 class ExploitationStrategy:
