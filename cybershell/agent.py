@@ -62,6 +62,7 @@ class AutonomousBountyHunter:
     """
     Main autonomous agent for bug bounty hunting
     Manages multiple sub-agents for different vulnerability classes
+    Now with fingerprinting and intelligent payload selection
     """
     
     def __init__(self, config: BountyConfig, bot, run_dir: str = "bounty_runs"):
@@ -76,6 +77,10 @@ class AutonomousBountyHunter:
         
         # Initialize exploitation strategies
         self.strategies = self._init_exploitation_strategies()
+        
+        # NEW: Initialize fingerprinting and payload management if available
+        self.fingerprinter = None
+        self.payload_manager = None
         
         # Sub-agents for parallel exploitation
         self.sub_agents = {
@@ -137,8 +142,22 @@ class AutonomousBountyHunter:
             'target': target,
             'phases': {},
             'findings': [],
-            'total_bounty_estimate': 0
+            'total_bounty_estimate': 0,
+            'fingerprint': None  # NEW
         }
+        
+        # NEW: Fingerprint target if fingerprinter available
+        if self.fingerprinter:
+            print("[FINGERPRINT] Fingerprinting target...")
+            fingerprint = self.fingerprinter.fingerprint(target, aggressive=False)
+            results['fingerprint'] = {
+                'product': fingerprint.product,
+                'version': fingerprint.version,
+                'technologies': fingerprint.technologies,
+                'server': fingerprint.server,
+                'waf': fingerprint.waf
+            }
+            print(f"[FINGERPRINT] Detected: {fingerprint.product} {fingerprint.version or 'unknown'}")
         
         # Phase 1: Reconnaissance
         recon_results = self._phase_recon(target)
@@ -265,11 +284,57 @@ class AutonomousBountyHunter:
                 continue
             
             try:
+                # NEW: Select optimal payloads using PayloadManager if available
+                selected_payloads = []
+                if self.payload_manager and self.fingerprinter:
+                    # Get fingerprint for target
+                    target_url = vuln.get('endpoint', '')
+                    if target_url:
+                        fingerprint = self.fingerprinter.fingerprint(target_url, aggressive=False)
+                        
+                        # Map vuln type to category
+                        vuln_category_map = {
+                            'sqli': 'SQLI',
+                            'xss': 'XSS',
+                            'ssrf': 'SSRF',
+                            'rce': 'RCE',
+                            'xxe': 'XXE',
+                            'ssti': 'RCE',
+                            'idor': 'IDOR',
+                            'auth_bypass': 'AUTH_BYPASS',
+                            'business_logic': 'BUSINESS_LOGIC'
+                        }
+                        
+                        if vuln['type'] in vuln_category_map:
+                            from cybershell.vulnerability_kb import VulnCategory
+                            vuln_cat = VulnCategory[vuln_category_map[vuln['type']]]
+                            
+                            # Get context for payload selection
+                            endpoint_context = {
+                                'endpoint_type': 'api' if 'api' in target_url else 'web',
+                                'injection_context': vuln.get('context', 'parameter'),
+                                'previous_responses': vuln.get('responses', [])
+                            }
+                            
+                            # Select payloads
+                            ranked_payloads = self.payload_manager.select_payloads(
+                                fingerprint=fingerprint,
+                                vulnerability=vuln_cat,
+                                context=endpoint_context,
+                                top_n=5
+                            )
+                            
+                            selected_payloads = [rp.payload for rp in ranked_payloads]
+                            
+                            if selected_payloads:
+                                print(f"[PAYLOAD] Selected {len(selected_payloads)} targeted payloads for {fingerprint.product or 'unknown'} {fingerprint.version or ''}")
+                
                 # Exploit with proof of concept
                 exploit_result = agent.exploit(
                     vuln,
                     collect_evidence=True,
-                    safe_mode=not self.config.aggressive_mode
+                    safe_mode=not self.config.aggressive_mode,
+                    exploit_payloads=selected_payloads if selected_payloads else None  # NEW: Pass selected payloads
                 )
                 
                 if exploit_result['success']:
@@ -288,8 +353,20 @@ class AutonomousBountyHunter:
                     
                     print(f"[+] Exploited {vuln['type']} at {vuln['endpoint']}")
                     
+                    # NEW: Update payload manager with success
+                    if self.payload_manager and exploit_result.get('payload_used'):
+                        self.payload_manager.update_history(
+                            exploit_result['payload_used'],
+                            success=True
+                        )
+                    
             except Exception as e:
                 print(f"[!] Exploitation failed: {e}")
+                
+                # NEW: Update payload manager with failure if applicable
+                if self.payload_manager and selected_payloads:
+                    for payload in selected_payloads:
+                        self.payload_manager.update_history(payload, success=False)
         
         return {'exploited_vulnerabilities': exploited}
     
@@ -559,29 +636,51 @@ class SQLInjectionAgent:
         
         return result if result['confidence'] > 0 else None
     
-    def exploit(self, vuln: Dict, collect_evidence: bool = True, safe_mode: bool = False) -> Dict:
+    def exploit(self, vuln: Dict, collect_evidence: bool = True, safe_mode: bool = False, 
+                exploit_payloads: Optional[List] = None) -> Dict:
         """Exploit SQL injection with evidence collection"""
         exploit_result = {
             'success': False,
             'type': 'sqli',
             'endpoint': vuln['endpoint'],
             'evidence': {},
-            'impact_proof': None
+            'impact_proof': None,
+            'payload_used': None  # Track which payload worked
         }
         
-        # Execute exploitation
-        response = self.bot.execute_plugin('SQLiExploitPlugin', {
-            'target': vuln['endpoint'],
-            'params': vuln['injectable_params'],
-            'extract_data': not safe_mode,
-            'enumerate_db': True
-        })
-        
-        if response.success:
-            exploit_result['success'] = True
-            exploit_result['evidence'] = response.details
-            exploit_result['impact_proof'] = f"Extracted {response.details.get('rows', 0)} rows from database"
-            exploit_result['impact_score'] = 8.5  # High impact for data breach
+        # Use provided payloads or fall back to default
+        if exploit_payloads:
+            # Try each payload in order of ranking
+            for payload_obj in exploit_payloads:
+                response = self.bot.execute_plugin('SQLiExploitPlugin', {
+                    'target': vuln['endpoint'],
+                    'params': vuln['injectable_params'],
+                    'payload': payload_obj.payload,  # Use specific payload
+                    'extract_data': not safe_mode,
+                    'enumerate_db': True
+                })
+                
+                if response.success:
+                    exploit_result['success'] = True
+                    exploit_result['evidence'] = response.details
+                    exploit_result['impact_proof'] = f"Extracted {response.details.get('rows', 0)} rows from database"
+                    exploit_result['impact_score'] = 8.5
+                    exploit_result['payload_used'] = payload_obj  # Track successful payload
+                    break
+        else:
+            # Fallback to default exploitation
+            response = self.bot.execute_plugin('SQLiExploitPlugin', {
+                'target': vuln['endpoint'],
+                'params': vuln['injectable_params'],
+                'extract_data': not safe_mode,
+                'enumerate_db': True
+            })
+            
+            if response.success:
+                exploit_result['success'] = True
+                exploit_result['evidence'] = response.details
+                exploit_result['impact_proof'] = f"Extracted {response.details.get('rows', 0)} rows from database"
+                exploit_result['impact_score'] = 8.5
         
         return exploit_result
 
@@ -613,28 +712,48 @@ class XSSAgent:
         
         return result if result['confidence'] > 0 else None
     
-    def exploit(self, vuln: Dict, collect_evidence: bool = True, safe_mode: bool = False) -> Dict:
+    def exploit(self, vuln: Dict, collect_evidence: bool = True, safe_mode: bool = False,
+                exploit_payloads: Optional[List] = None) -> Dict:
         """Exploit XSS with session hijacking proof"""
         exploit_result = {
             'success': False,
             'type': 'xss',
             'endpoint': vuln['endpoint'],
             'evidence': {},
-            'impact_proof': None
+            'impact_proof': None,
+            'payload_used': None
         }
         
-        response = self.bot.execute_plugin('XSSExploitPlugin', {
-            'target': vuln['endpoint'],
-            'contexts': vuln['contexts'],
-            'steal_session': not safe_mode,
-            'screenshot': True
-        })
-        
-        if response.success:
-            exploit_result['success'] = True
-            exploit_result['evidence'] = response.details
-            exploit_result['impact_proof'] = "Demonstrated session hijacking capability"
-            exploit_result['impact_score'] = 7.5
+        if exploit_payloads:
+            for payload_obj in exploit_payloads:
+                response = self.bot.execute_plugin('XSSExploitPlugin', {
+                    'target': vuln['endpoint'],
+                    'contexts': vuln['contexts'],
+                    'payload': payload_obj.payload,
+                    'steal_session': not safe_mode,
+                    'screenshot': True
+                })
+                
+                if response.success:
+                    exploit_result['success'] = True
+                    exploit_result['evidence'] = response.details
+                    exploit_result['impact_proof'] = "Demonstrated session hijacking capability"
+                    exploit_result['impact_score'] = 7.5
+                    exploit_result['payload_used'] = payload_obj
+                    break
+        else:
+            response = self.bot.execute_plugin('XSSExploitPlugin', {
+                'target': vuln['endpoint'],
+                'contexts': vuln['contexts'],
+                'steal_session': not safe_mode,
+                'screenshot': True
+            })
+            
+            if response.success:
+                exploit_result['success'] = True
+                exploit_result['evidence'] = response.details
+                exploit_result['impact_proof'] = "Demonstrated session hijacking capability"
+                exploit_result['impact_score'] = 7.5
         
         return exploit_result
 
@@ -666,14 +785,16 @@ class IDORAgent:
         
         return result if result['confidence'] > 0 else None
     
-    def exploit(self, vuln: Dict, collect_evidence: bool = True, safe_mode: bool = False) -> Dict:
+    def exploit(self, vuln: Dict, collect_evidence: bool = True, safe_mode: bool = False,
+                exploit_payloads: Optional[List] = None) -> Dict:
         """Exploit IDOR with data access proof"""
         exploit_result = {
             'success': False,
             'type': 'idor',
             'endpoint': vuln['endpoint'],
             'evidence': {},
-            'impact_proof': None
+            'impact_proof': None,
+            'payload_used': None
         }
         
         response = self.bot.execute_plugin('IDORExploitPlugin', {
@@ -720,29 +841,50 @@ class RCEAgent:
         
         return result if result['confidence'] > 0 else None
     
-    def exploit(self, vuln: Dict, collect_evidence: bool = True, safe_mode: bool = False) -> Dict:
+    def exploit(self, vuln: Dict, collect_evidence: bool = True, safe_mode: bool = False,
+                exploit_payloads: Optional[List] = None) -> Dict:
         """Exploit RCE with system access proof"""
         exploit_result = {
             'success': False,
             'type': 'rce',
             'endpoint': vuln['endpoint'],
             'evidence': {},
-            'impact_proof': None
+            'impact_proof': None,
+            'payload_used': None
         }
         
-        response = self.bot.execute_plugin('RCEExploitPlugin', {
-            'target': vuln['endpoint'],
-            'vectors': vuln['vectors'],
-            'establish_shell': not safe_mode,
-            'system_enumeration': True,
-            'safe_demonstration': safe_mode
-        })
-        
-        if response.success:
-            exploit_result['success'] = True
-            exploit_result['evidence'] = response.details
-            exploit_result['impact_proof'] = "Full system compromise achieved"
-            exploit_result['impact_score'] = 10.0  # Critical impact
+        if exploit_payloads:
+            for payload_obj in exploit_payloads:
+                response = self.bot.execute_plugin('RCEExploitPlugin', {
+                    'target': vuln['endpoint'],
+                    'vectors': vuln['vectors'],
+                    'payload': payload_obj.payload,
+                    'establish_shell': not safe_mode,
+                    'system_enumeration': True,
+                    'safe_demonstration': safe_mode
+                })
+                
+                if response.success:
+                    exploit_result['success'] = True
+                    exploit_result['evidence'] = response.details
+                    exploit_result['impact_proof'] = "Full system compromise achieved"
+                    exploit_result['impact_score'] = 10.0
+                    exploit_result['payload_used'] = payload_obj
+                    break
+        else:
+            response = self.bot.execute_plugin('RCEExploitPlugin', {
+                'target': vuln['endpoint'],
+                'vectors': vuln['vectors'],
+                'establish_shell': not safe_mode,
+                'system_enumeration': True,
+                'safe_demonstration': safe_mode
+            })
+            
+            if response.success:
+                exploit_result['success'] = True
+                exploit_result['evidence'] = response.details
+                exploit_result['impact_proof'] = "Full system compromise achieved"
+                exploit_result['impact_score'] = 10.0
         
         return exploit_result
 
@@ -775,14 +917,16 @@ class AuthBypassAgent:
         
         return result if result['confidence'] > 0 else None
     
-    def exploit(self, vuln: Dict, collect_evidence: bool = True, safe_mode: bool = False) -> Dict:
+    def exploit(self, vuln: Dict, collect_evidence: bool = True, safe_mode: bool = False,
+                exploit_payloads: Optional[List] = None) -> Dict:
         """Exploit authentication bypass"""
         exploit_result = {
             'success': False,
             'type': 'auth_bypass',
             'endpoint': vuln['endpoint'],
             'evidence': {},
-            'impact_proof': None
+            'impact_proof': None,
+            'payload_used': None
         }
         
         response = self.bot.execute_plugin('AuthBypassExploitPlugin', {
@@ -828,14 +972,16 @@ class BusinessLogicAgent:
         
         return result if result['confidence'] > 0 else None
     
-    def exploit(self, vuln: Dict, collect_evidence: bool = True, safe_mode: bool = False) -> Dict:
+    def exploit(self, vuln: Dict, collect_evidence: bool = True, safe_mode: bool = False,
+                exploit_payloads: Optional[List] = None) -> Dict:
         """Exploit business logic flaws"""
         exploit_result = {
             'success': False,
             'type': 'business_logic',
             'endpoint': vuln['endpoint'],
             'evidence': {},
-            'impact_proof': None
+            'impact_proof': None,
+            'payload_used': None
         }
         
         response = self.bot.execute_plugin('BusinessLogicExploitPlugin', {
@@ -880,28 +1026,48 @@ class SSRFAgent:
         
         return result if result['confidence'] > 0 else None
     
-    def exploit(self, vuln: Dict, collect_evidence: bool = True, safe_mode: bool = False) -> Dict:
+    def exploit(self, vuln: Dict, collect_evidence: bool = True, safe_mode: bool = False,
+                exploit_payloads: Optional[List] = None) -> Dict:
         """Exploit SSRF to access internal resources"""
         exploit_result = {
             'success': False,
             'type': 'ssrf',
             'endpoint': vuln['endpoint'],
             'evidence': {},
-            'impact_proof': None
+            'impact_proof': None,
+            'payload_used': None
         }
         
-        response = self.bot.execute_plugin('SSRFExploitPlugin', {
-            'target': vuln['endpoint'],
-            'params': vuln['vulnerable_params'],
-            'access_metadata': not safe_mode,
-            'scan_internal': True
-        })
-        
-        if response.success:
-            exploit_result['success'] = True
-            exploit_result['evidence'] = response.details
-            exploit_result['impact_proof'] = "Accessed internal network resources"
-            exploit_result['impact_score'] = 8.0
+        if exploit_payloads:
+            for payload_obj in exploit_payloads:
+                response = self.bot.execute_plugin('SSRFExploitPlugin', {
+                    'target': vuln['endpoint'],
+                    'params': vuln['vulnerable_params'],
+                    'payload': payload_obj.payload,
+                    'access_metadata': not safe_mode,
+                    'scan_internal': True
+                })
+                
+                if response.success:
+                    exploit_result['success'] = True
+                    exploit_result['evidence'] = response.details
+                    exploit_result['impact_proof'] = "Accessed internal network resources"
+                    exploit_result['impact_score'] = 8.0
+                    exploit_result['payload_used'] = payload_obj
+                    break
+        else:
+            response = self.bot.execute_plugin('SSRFExploitPlugin', {
+                'target': vuln['endpoint'],
+                'params': vuln['vulnerable_params'],
+                'access_metadata': not safe_mode,
+                'scan_internal': True
+            })
+            
+            if response.success:
+                exploit_result['success'] = True
+                exploit_result['evidence'] = response.details
+                exploit_result['impact_proof'] = "Accessed internal network resources"
+                exploit_result['impact_score'] = 8.0
         
         return exploit_result
 
@@ -933,28 +1099,48 @@ class XXEAgent:
         
         return result if result['confidence'] > 0 else None
     
-    def exploit(self, vuln: Dict, collect_evidence: bool = True, safe_mode: bool = False) -> Dict:
+    def exploit(self, vuln: Dict, collect_evidence: bool = True, safe_mode: bool = False,
+                exploit_payloads: Optional[List] = None) -> Dict:
         """Exploit XXE for file disclosure"""
         exploit_result = {
             'success': False,
             'type': 'xxe',
             'endpoint': vuln['endpoint'],
             'evidence': {},
-            'impact_proof': None
+            'impact_proof': None,
+            'payload_used': None
         }
         
-        response = self.bot.execute_plugin('XXEExploitPlugin', {
-            'target': vuln['endpoint'],
-            'parsers': vuln['parsers'],
-            'extract_files': not safe_mode,
-            'files': ['/etc/passwd', '/etc/shadow', 'web.config', '.env']
-        })
-        
-        if response.success:
-            exploit_result['success'] = True
-            exploit_result['evidence'] = response.details
-            exploit_result['impact_proof'] = f"Extracted {len(response.details.get('files', []))} sensitive files"
-            exploit_result['impact_score'] = 7.5
+        if exploit_payloads:
+            for payload_obj in exploit_payloads:
+                response = self.bot.execute_plugin('XXEExploitPlugin', {
+                    'target': vuln['endpoint'],
+                    'parsers': vuln['parsers'],
+                    'payload': payload_obj.payload,
+                    'extract_files': not safe_mode,
+                    'files': ['/etc/passwd', '/etc/shadow', 'web.config', '.env']
+                })
+                
+                if response.success:
+                    exploit_result['success'] = True
+                    exploit_result['evidence'] = response.details
+                    exploit_result['impact_proof'] = f"Extracted {len(response.details.get('files', []))} sensitive files"
+                    exploit_result['impact_score'] = 7.5
+                    exploit_result['payload_used'] = payload_obj
+                    break
+        else:
+            response = self.bot.execute_plugin('XXEExploitPlugin', {
+                'target': vuln['endpoint'],
+                'parsers': vuln['parsers'],
+                'extract_files': not safe_mode,
+                'files': ['/etc/passwd', '/etc/shadow', 'web.config', '.env']
+            })
+            
+            if response.success:
+                exploit_result['success'] = True
+                exploit_result['evidence'] = response.details
+                exploit_result['impact_proof'] = f"Extracted {len(response.details.get('files', []))} sensitive files"
+                exploit_result['impact_score'] = 7.5
         
         return exploit_result
 
@@ -986,14 +1172,16 @@ class SSTIAgent:
         
         return result if result['confidence'] > 0 else None
     
-    def exploit(self, vuln: Dict, collect_evidence: bool = True, safe_mode: bool = False) -> Dict:
+    def exploit(self, vuln: Dict, collect_evidence: bool = True, safe_mode: bool = False,
+                exploit_payloads: Optional[List] = None) -> Dict:
         """Exploit SSTI for code execution"""
         exploit_result = {
             'success': False,
             'type': 'ssti',
             'endpoint': vuln['endpoint'],
             'evidence': {},
-            'impact_proof': None
+            'impact_proof': None,
+            'payload_used': None
         }
         
         response = self.bot.execute_plugin('SSTIExploitPlugin', {
