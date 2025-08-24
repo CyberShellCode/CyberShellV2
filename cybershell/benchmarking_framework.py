@@ -13,6 +13,7 @@ import pandas as pd
 from collections import defaultdict
 import hashlib
 import yaml
+from datetime import timezone
 
 @dataclass
 class BenchmarkTarget:
@@ -174,7 +175,7 @@ class BenchmarkingFramework:
         self.current_session = {
             'id': self._generate_session_id(),
             'suite': suite_name,
-            'start_time': datetime.now(),
+            'start_time': datetime.now(timezone.utc),
             'targets': len(suite),
             'parallel': parallel
         }
@@ -216,7 +217,7 @@ class BenchmarkingFramework:
     async def _run_single_benchmark(self, target: BenchmarkTarget) -> BenchmarkResult:
         """Run a single benchmark test"""
         
-        start_time = datetime.now()
+        start_time = datetime.now(timezone.utc)
         
         # Initialize metrics collection
         metrics_collector = MetricsCollector()
@@ -236,7 +237,7 @@ class BenchmarkingFramework:
             except asyncio.CancelledError:
                 pass
                 
-            end_time = datetime.now()
+            end_time = datetime.now(timezone.utc)
             duration = (end_time - start_time).total_seconds()
             
             # Calculate accuracy metrics
@@ -280,8 +281,8 @@ class BenchmarkingFramework:
             return BenchmarkResult(
                 target=target,
                 start_time=start_time,
-                end_time=datetime.now(),
-                duration=(datetime.now() - start_time).total_seconds(),
+                end_time=datetime.now(timezone.utc),
+                duration=(datetime.now(timezone.utc) - start_time).total_seconds(),
                 vulnerabilities_found=0,
                 true_positives=0,
                 false_positives=0,
@@ -610,7 +611,7 @@ class BenchmarkingFramework:
             json.dump(analysis, f, indent=2, default=str)
         
         # Save session metadata
-        self.current_session['end_time'] = datetime.now()
+        self.current_session['end_time'] = datetime.now(timezone.utc)
         with open(session_dir / 'session.json', 'w') as f:
             json.dump(self.current_session, f, indent=2, default=str)
     
@@ -704,7 +705,7 @@ class BenchmarkingFramework:
     def _generate_session_id(self) -> str:
         """Generate unique session ID"""
         
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
         random_suffix = hashlib.md5(str(time.time()).encode()).hexdigest()[:8]
         return f"benchmark_{timestamp}_{random_suffix}"
 
