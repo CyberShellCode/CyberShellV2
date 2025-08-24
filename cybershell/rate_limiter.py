@@ -49,6 +49,23 @@ class RateLimiter:
         self.adaptive_mode = False
         self.response_times = deque(maxlen=100)
         
+        # FIXED: Persistent async rate limiter
+        self._async_limiter = None
+        self._async_limiter_lock = threading.Lock()
+    
+    def get_async_limiter(self) -> 'AsyncRateLimiter':
+        """Get or create the persistent async rate limiter"""
+        if self._async_limiter is None:
+            with self._async_limiter_lock:
+                if self._async_limiter is None:
+                    self._async_limiter = AsyncRateLimiter(self.default_rps)
+        return self._async_limiter
+    
+    def update_async_limiter_rate(self):
+        """Update async limiter rate when default_rps changes"""
+        if self._async_limiter is not None:
+            self._async_limiter.rate = self.default_rps
+        
     def get_rate_limit(self, host: Optional[str] = None) -> float:
         """Get applicable rate limit for host"""
         if host and host in self.per_host_limits:
@@ -139,9 +156,11 @@ class RateLimiter:
             # Temporarily adjust rate for bulk operation
             if estimated_requests > 50:
                 self.default_rps = min(self.default_rps, 2.0)  # More conservative for large bulks
+                self.update_async_limiter_rate()  # Update async limiter
             yield self
         finally:
             self.default_rps = original_rps
+            self.update_async_limiter_rate()  # Restore async limiter rate
     
     def adjust_adaptive(self, response_time: float, error_occurred: bool = False):
         """
@@ -159,14 +178,17 @@ class RateLimiter:
         if error_occurred:
             # Slow down on errors
             self.default_rps = max(1.0, self.default_rps * 0.8)
+            self.update_async_limiter_rate()  # Update async limiter
             logger.warning(f"Rate limit reduced to {self.default_rps:.2f} rps due to error")
         elif len(self.response_times) >= 10:
             avg_response = sum(self.response_times) / len(self.response_times)
             
             if avg_response < 0.5:  # Server responding quickly
                 self.default_rps = min(10.0, self.default_rps * 1.1)
+                self.update_async_limiter_rate()  # Update async limiter
             elif avg_response > 2.0:  # Server responding slowly
                 self.default_rps = max(1.0, self.default_rps * 0.9)
+                self.update_async_limiter_rate()  # Update async limiter
     
     def get_stats(self) -> Dict[str, Any]:
         """Get rate limiting statistics"""
@@ -217,6 +239,11 @@ class AsyncRateLimiter:
             self.request_times.append(time.time())
 
 
+# Module-level cache for async limiters used by decorators
+_decorator_async_limiters = {}
+_decorator_limiters_lock = threading.Lock()
+
+
 def rate_limited(rate_limiter: Optional[RateLimiter] = None, 
                  host_extractor: Optional[Callable] = None):
     """
@@ -227,6 +254,9 @@ def rate_limited(rate_limiter: Optional[RateLimiter] = None,
         host_extractor: Function to extract host from args
     """
     def decorator(func):
+        # FIXED: Store the async limiter at decoration time
+        decorator_id = id(func)
+        
         @wraps(func)
         def wrapper(*args, **kwargs):
             nonlocal rate_limiter
@@ -267,8 +297,13 @@ def rate_limited(rate_limiter: Optional[RateLimiter] = None,
         
         @wraps(func)
         async def async_wrapper(*args, **kwargs):
-            # Async version of the wrapper
-            async_limiter = AsyncRateLimiter(rate_limiter.default_rps if rate_limiter else 5.0)
+            nonlocal rate_limiter
+            
+            if rate_limiter is None:
+                rate_limiter = get_global_rate_limiter()
+            
+            # FIXED: Use persistent async limiter from rate_limiter instance
+            async_limiter = rate_limiter.get_async_limiter()
             await async_limiter.acquire()
             return await func(*args, **kwargs)
         
