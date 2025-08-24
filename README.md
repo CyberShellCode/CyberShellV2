@@ -120,11 +120,11 @@ make install-all        # Everything
 
 ```
 cybershell/
-├── models/                              # ML models and training data
-│   └── adaptive/                        # Adaptive learning models
-├── reports/                             # Generated reports
-├── benchmarks/                          # Benchmark results
-├── cybershell/                          # Core framework
+├── models/                             # ML models and training data
+│   └── adaptive/                       # Adaptive learning models
+├── reports/                            # Generated reports
+├── benchmarks/                         # Benchmark results
+├── cybershell/                         # Core framework
 │   ├── __init__.py
 │   ├── __main__.py                     # Entry point for module execution
 │   ├── orchestrator.py                 # Main orchestration engine
@@ -140,31 +140,31 @@ cybershell/
 │   │   ├── mapper.py
 │   │   ├── miner.py
 │   │   └── ods.py
-│   ├── continuous_learning_pipeline.py # ML training pipeline
-│   ├── business_impact_reporter.py     # Business reporting
-│   ├── benchmarking_framework.py       # Performance benchmarking
-│   ├── advanced_ai_orchestrator.py     # Multi-model AI
+│   ├── continuous_learning_pipeline.py    # ML training pipeline
+│   ├── business_impact_reporter.py        # Business reporting
+│   ├── benchmarking_framework.py          # Performance benchmarking
+│   ├── advanced_ai_orchestrator.py        # Multi-model AI
 │   ├── autonomous_orchestration_engine.py # True autonomy
-│   └── validation_framework.py         # NEW: Validation system
-├── plugins_user/                        # User plugins directory
-│   ├── exploitation_plugins.py         # Main exploit plugins
-│   ├── business_logic_plugin.py        # Business logic testing
-│   ├── anti_automation_plugin.py       # WAF bypass
-│   └── custom_plugins.py               # Your custom plugins
-├── dashboard/                           # Web dashboard
+│   └── validation_framework.py            # Validation system
+├── plugins_user/                          # User plugins directory
+│   ├── exploitation_plugins.py            # Main exploit plugins
+│   ├── business_logic_plugin.py           # Business logic testing
+│   ├── anti_automation_plugin.py          # WAF bypass
+│   └── custom_plugins.py                  # Your custom plugins
+├── dashboard/                             # Web dashboard
 │   ├── streamlit_app.py
 │   └── components/
-├── docs/                               # Documentation
-├── tests/                              # Test suite
-├── __main__.py                         # Main entry point
-├── main.py                             # Legacy entry point
-├── run_ctf.py                          # CTF helper script
-├── requirements.txt                    # Python dependencies
-├── requirements-llm.txt                # LLM dependencies
-├── requirements-dashboard.txt          # Dashboard dependencies
-├── Makefile                           # Build automation
-├── config.yaml                        # Configuration file
-└── README.md                          # This file
+├── docs/                                  # Documentation
+├── tests/                                 # Test suite
+├── __main__.py                            # Main entry point
+├── main.py                                # Legacy entry point
+├── run_ctf.py                             # CTF helper script
+├── requirements.txt                       # Python dependencies
+├── requirements-llm.txt                   # LLM dependencies
+├── requirements-dashboard.txt             # Dashboard dependencies
+├── Makefile                               # Build automation
+├── config.yaml                            # Configuration file
+└── README.md                              # This file
 ```
 
 ## 🎮 Usage Modes
