@@ -305,18 +305,15 @@ class AdvancedAIOrchestrator:
                 }
                 
                 # Cache successful response
-                self.response_cache[cache_key] = {
-                    'response': result,
-                    'timestamp': time.time()
-                }
-                
+                self.response_cache[cache_key] = {'response': result, 'timestamp': time.time()}
                 return result
-                
-            except Exception as e:
+                except Exception:
                 if attempt == self.config['max_retries'] - 1:
-                    raise e
+                    raise            
                 await asyncio.sleep(2 ** attempt)  # Exponential backoff
-    
+        # Should not be reached; defensive safeguard
+        raise RuntimeError("Model execution retries exhausted without raising.")
+
     async def _execute_ollama(self, model: AIModel, prompt: str) -> str:
         """Execute Ollama model"""
         # Simulate Ollama API call
@@ -457,9 +454,6 @@ class AdvancedAIOrchestrator:
         # If we have product/version, get specific payload
         if fingerprint.get('product'):
             try:
-                vuln_category = VulnCategory[task.upper()] if task != 'weighted' else VulnCategory.XSS
-                
-                # Get payloads from KB
                 product_payloads = self.kb.get_payloads_by_product(
                     fingerprint['product'],
                     fingerprint.get('version')
@@ -469,8 +463,8 @@ class AdvancedAIOrchestrator:
                     # Return highest confidence payload
                     best = max(product_payloads, key=lambda p: p.confidence_score)
                     return best.payload
-            except:
-                pass
+            except Exception as e:
+                print(f"[KB] product-specific payload selection failed: {e}")
         
         # Fallback to generic payload
         return self._generate_payload(strategy, task)
@@ -800,28 +794,40 @@ class PromptOptimizer:
             """
         }
     
-    def optimize_prompt(self, model: AIModel, task: str, context: Dict, 
-                       fingerprint: Optional[Dict] = None) -> str:
+    def optimize_prompt(self, model: AIModel, task: str, context: Dict,
+                        fingerprint: Optional[Dict] = None) -> str:
         """Optimize prompt for specific model and task with fingerprint"""
-        
-        # Get base template
+        # Get base template (default to vulnerability_analysis)
         template = self.prompt_templates.get(task, self.prompt_templates['vulnerability_analysis'])
-        
-        # Add fingerprint data to context
+
+        # Build a non-mutating formatting context
+        format_ctx = {
+            # Always present fields expected by templates
+            'vulnerability_type': task,
+            'target': context.get('target', {}),
+            'context': context,
+            'target_profile': context.get('target', {}),
+            'attempts': context.get('history', []),
+            'kb_alternatives': context.get('suggested_payloads', []),
+            'fingerprint': json.dumps(context.get('fingerprint', {})),
+            'product': 'unknown',
+            'version': 'unknown',
+            'vulnerabilities': context.get('vulnerability', {}),
+        }
         if fingerprint:
-            context['product'] = fingerprint.get('product', 'unknown')
-            context['version'] = fingerprint.get('version', 'unknown')
-            context['fingerprint'] = json.dumps(fingerprint)
-        
+            format_ctx['product'] = fingerprint.get('product', 'unknown')
+            format_ctx['version'] = fingerprint.get('version', 'unknown')
+            format_ctx['fingerprint'] = json.dumps(fingerprint)
+
         # Apply model-specific optimizations
         if model.provider == 'ollama':
-            prompt = self._optimize_for_ollama(template, context)
+            prompt = self._optimize_for_ollama(template, format_ctx)
         elif model.provider == 'openai':
-            prompt = self._optimize_for_openai(template, context)
+            prompt = self._optimize_for_openai(template, format_ctx)
         elif model.provider == 'anthropic':
-            prompt = self._optimize_for_anthropic(template, context)
+            prompt = self._optimize_for_anthropic(template, format_ctx)
         else:
-            prompt = template.format(**context)
+            prompt = template.format(**format_ctx)
         
         # Apply general optimizations
         prompt = self._apply_general_optimizations(prompt, model)
