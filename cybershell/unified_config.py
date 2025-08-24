@@ -420,7 +420,7 @@ class UnifiedConfig:
         
         return self._rate_limiter
     
-    def apply_rate_limiting(self):
+    def apply_rate_limiting(self) -> None:
         """Apply rate limiting configuration globally"""
         from cybershell.rate_limiter import configure_rate_limiting
         
@@ -439,10 +439,10 @@ class UnifiedConfig:
         config_path = Path(config_file)
         
         if not config_path.exists():
-            logger.warning(f"Config file {config_file} not found, using defaults")
+            logger.warning("Config file %s not found, using defaults", config_file)
             return cls()
         
-        with open(config_path, 'r') as f:
+        with open(config_path) as f:
             data = yaml.safe_load(f) or {}
         
         return cls.from_dict(data, config_file=config_file)
@@ -617,7 +617,7 @@ class UnifiedConfig:
         with open(config_file, 'w') as f:
             yaml.dump(self.to_dict(), f, default_flow_style=False, sort_keys=False)
         
-        logger.info(f"Configuration saved to {config_file}")
+        logger.info("Configuration saved to %s", config_file)
     
     def validate(self) -> List[str]:
         """Validate configuration and return list of issues"""
@@ -708,12 +708,12 @@ class ConfigurationManager:
         # Apply rate limiting if enabled
         if self._config.rate_limit.enabled:
             self._config.apply_rate_limiting()
-            logger.info(f"Rate limiting enabled: {self._config.rate_limit.requests_per_second} RPS")
+            logger.info("Rate limiting enabled: %s RPS", self._config.rate_limit.requests_per_second)
         
         # Validate configuration
         issues = self._config.validate()
         if issues:
-            logger.warning(f"Configuration issues: {issues}")
+            logger.warning("Configuration issues: %s", issues)
         
         return self._config
     
@@ -724,7 +724,7 @@ class ConfigurationManager:
             self._config = UnifiedConfig()
         return self._config
     
-    def reload(self):
+    def reload(self) -> None:
         """Reload configuration from file"""
         if self._config and self._config.config_file:
             self._config = UnifiedConfig.from_file(self._config.config_file)
@@ -734,7 +734,7 @@ class ConfigurationManager:
             if self._config.rate_limit.enabled:
                 self._config.apply_rate_limiting()
     
-    def update(self, **kwargs):
+    def update(self, **kwargs) -> None:
         """Update specific configuration values"""
         for key, value in kwargs.items():
             if hasattr(self._config, key):
@@ -754,7 +754,7 @@ def initialize_config(config_file: Optional[str] = None,
     """Initialize and return configuration"""
     return ConfigurationManager().initialize(config_file, args, config_dict)
 
-def update_config(**kwargs):
+def update_config(**kwargs) -> None:
     """Update configuration values"""
     ConfigurationManager().update(**kwargs)
 
