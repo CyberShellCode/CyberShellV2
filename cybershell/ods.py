@@ -359,11 +359,7 @@ class OutcomeDirectedSearch:
             {'xxe', 'ssrf'}
         ]
         
-        for pair in chainable_pairs:
-            if pair.issubset(vuln_types):
-                return True
-        
-        return False
+        return any(pair.issubset(vuln_types) for pair in chainable_pairs)
     
     def get_recommended_next_steps(self, target: str) -> List[PlanStep]:
         """Get recommended next steps based on current state"""
