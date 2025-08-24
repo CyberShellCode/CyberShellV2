@@ -1,12 +1,13 @@
 
-from dataclasses import dataclass
-from typing import Callable, Dict
 import time
+from dataclasses import dataclass
+from typing import Callable, Dict, Optional
 @dataclass
 class State:
+    """A simple FSM state with optional enter/exit hooks."""
     name: str
-    on_enter: Callable[[], None] = lambda: None
-    on_exit: Callable[[], None] = lambda: None
+    on_enter: Optional[Callable[[], None]] = None
+    on_exit: Optional[Callable[[], None]] = None
 class SimpleStateMachine:
     def __init__(self, initial: str):
         self.state = initial
