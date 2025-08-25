@@ -231,3 +231,33 @@ logging:
   log_fingerprints: true
   log_payload_selection: true
   log_exploitation_attempts: true
+
+  # External Tools Configuration
+external_tools:
+  enabled: true
+  nmap_path: "nmap"
+  sqlmap_path: "sqlmap"
+  output_directory: "./tool_output"
+  requests_per_second: 2  # Conservative for bug bounty
+
+# IDOR Hunting Configuration  
+idor_hunting:
+  enabled: true
+  authentication:
+    attempt_default_credentials: true
+    max_credential_attempts: 5
+    lockout_detection: true
+  testing:
+    max_object_id_tests: 10
+    response_similarity_threshold: 0.8
+
+# Enhanced Payload Configuration
+payload_enhancement:
+  enabled: true
+  context_adaptation:
+    database_specific: true
+    waf_evasion: true
+    encoding_chains: true
+  success_tracking:
+    enabled: true
+    history_file: "./payload_history.json"
