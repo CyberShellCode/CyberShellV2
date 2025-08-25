@@ -1,20 +1,25 @@
 import asyncio
 import json
 import time
-from typing import Dict, List, Optional, Tuple, Any, Callable
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from pathlib import Path
-import numpy as np
+import logging
+import traceback
+from typing import Dict, List, Optional, Any
+from dataclasses import dataclass
+from datetime import datetime
 from collections import deque
 import hashlib
 import re
 from enum import Enum
+import numpy as np
 
-# NEW: Import payload management
-from .payload_manager import PayloadManager, RankedPayload
+# Import payload management
+from .payload_manager import PayloadManager
 from .vulnerability_kb import VulnerabilityKnowledgeBase, VulnCategory
 from .fingerprinter import TargetFingerprint
+
+# Set up module logger
+logger = logging.getLogger(__name__)
+
 
 class ModelCapability(Enum):
     """Capabilities of different AI models"""
@@ -25,6 +30,7 @@ class ModelCapability(Enum):
     STRATEGIC_PLANNING = "strategic_planning"
     REPORT_WRITING = "report_writing"
     REVERSE_ENGINEERING = "reverse_engineering"
+
 
 @dataclass
 class AIModel:
@@ -39,6 +45,7 @@ class AIModel:
     specializations: List[str]
     connection_params: Dict[str, Any]
 
+
 @dataclass
 class ContextWindow:
     """Manages context for AI interactions"""
@@ -49,8 +56,9 @@ class ContextWindow:
     vulnerability_context: Dict
     target_profile: Dict
     exploitation_history: List[Dict]
-    fingerprint_data: Optional[Dict] = None  # NEW
-    
+    fingerprint_data: Optional[Dict] = None
+
+
 class AdvancedAIOrchestrator:
     """
     Orchestrates multiple AI models for optimal exploitation strategies
@@ -66,7 +74,7 @@ class AdvancedAIOrchestrator:
         self.response_cache = {}
         self.performance_tracker = PerformanceTracker()
         
-        # NEW: Initialize payload management
+        # Initialize payload management
         self.kb = VulnerabilityKnowledgeBase()
         self.payload_manager = PayloadManager(self.kb)
         
@@ -81,7 +89,7 @@ class AdvancedAIOrchestrator:
             'prompt_optimization': True,
             'max_retries': 3,
             'temperature_range': (0.1, 0.9),
-            'use_fingerprint_context': True  # NEW
+            'use_fingerprint_context': True
         }
     
     def _initialize_models(self) -> Dict[str, AIModel]:
@@ -148,6 +156,21 @@ class AdvancedAIOrchestrator:
             )
         }
     
+    def _map_vulnerability_to_specialization(self, vulnerability_type: str) -> str:
+        """Map vulnerability type to model specialization"""
+        mapping = {
+            'XSS': 'web_exploitation',
+            'SQLI': 'web_exploitation', 
+            'RCE': 'code_analysis',
+            'SSRF': 'web_exploitation',
+            'XXE': 'detailed_analysis',
+            'IDOR': 'analysis',
+            'AUTH_BYPASS': 'security',
+            'BUSINESS_LOGIC': 'reasoning',
+            'AUTO': 'analysis'
+        }
+        return mapping.get(vulnerability_type.upper(), 'analysis')
+    
     async def orchestrate_exploitation(self, 
                                       target: str,
                                       vulnerability_type: str,
@@ -164,9 +187,12 @@ class AdvancedAIOrchestrator:
             'server': target_info.get('server')
         }
         
-        # Select best models for the task
+        # Map vulnerability type to specialization for better model selection
+        specialization = self._map_vulnerability_to_specialization(vulnerability_type)
+        
+        # Select best models for the task with proper specialization
         selected_models = self.model_selector.select_models(
-            task_type=vulnerability_type,
+            task_type=specialization,
             capabilities_needed=[
                 ModelCapability.VULNERABILITY_ANALYSIS,
                 ModelCapability.PAYLOAD_CRAFTING
@@ -179,7 +205,7 @@ class AdvancedAIOrchestrator:
             target=target,
             vulnerability_type=vulnerability_type,
             base_context=context,
-            fingerprint=fingerprint_data  # NEW
+            fingerprint=fingerprint_data
         )
         
         # Get version-specific payloads from knowledge base
@@ -191,8 +217,12 @@ class AdvancedAIOrchestrator:
                     fingerprint_data
                 )
                 enriched_context['suggested_payloads'] = kb_payloads
-            except:
-                pass
+            except KeyError as e:
+                logger.error(f"Invalid vulnerability category: {vulnerability_type}. Error: {e}")
+                enriched_context['suggested_payloads'] = []
+            except Exception as e:
+                logger.error(f"Failed to get KB payloads: {e}", exc_info=True)
+                enriched_context['suggested_payloads'] = []
         
         # Generate optimized prompts for each model
         prompts = {}
@@ -201,7 +231,7 @@ class AdvancedAIOrchestrator:
                 model=model,
                 task=vulnerability_type,
                 context=enriched_context,
-                fingerprint=fingerprint_data  # NEW
+                fingerprint=fingerprint_data
             )
         
         # Execute parallel model queries
@@ -209,6 +239,9 @@ class AdvancedAIOrchestrator:
         
         # Ensemble and synthesize results
         final_result = self._ensemble_results(results, vulnerability_type, fingerprint_data)
+        
+        # Update context manager with result for learning
+        self.context_manager.update_with_result(target, vulnerability_type, final_result)
         
         # Update performance tracking
         self.performance_tracker.record_execution(
@@ -224,8 +257,6 @@ class AdvancedAIOrchestrator:
                                          vuln_category: VulnCategory,
                                          fingerprint: Dict) -> List[str]:
         """Get payloads matching the target fingerprint"""
-        # Create mock fingerprint object for payload manager
-        from .fingerprinter import TargetFingerprint
         mock_fp = TargetFingerprint(
             url="",
             product=fingerprint.get('product'),
@@ -258,9 +289,9 @@ class AdvancedAIOrchestrator:
         
         # Process results
         model_results = {}
-        for i, (model_name, model) in enumerate(models.items()):
+        for i, (model_name, _) in enumerate(models.items()):
             if isinstance(results[i], Exception):
-                print(f"Model {model_name} failed: {results[i]}")
+                logger.error(f"Model {model_name} failed with error: {results[i]}", exc_info=results[i])
                 model_results[model_name] = None
             else:
                 model_results[model_name] = results[i]
@@ -307,10 +338,12 @@ class AdvancedAIOrchestrator:
                 # Cache successful response
                 self.response_cache[cache_key] = {'response': result, 'timestamp': time.time()}
                 return result
-                except Exception:
+                
+            except Exception as e:
                 if attempt == self.config['max_retries'] - 1:
-                    raise            
+                    raise
                 await asyncio.sleep(2 ** attempt)  # Exponential backoff
+        
         # Should not be reached; defensive safeguard
         raise RuntimeError("Model execution retries exhausted without raising.")
 
@@ -373,7 +406,7 @@ class AdvancedAIOrchestrator:
             'model_consensus': synthesized['consensus'],
             'latency': max([r['latency_ms'] for r in valid_results]),
             'models_used': [r['model'] for r in valid_results],
-            'fingerprint_match': synthesized.get('fingerprint_match', False)  # NEW
+            'fingerprint_match': synthesized.get('fingerprint_match', False)
         }
     
     def _voting_ensemble(self, results: List[Dict], task: str, fingerprint: Dict) -> Dict:
@@ -464,7 +497,7 @@ class AdvancedAIOrchestrator:
                     best = max(product_payloads, key=lambda p: p.confidence_score)
                     return best.payload
             except Exception as e:
-                print(f"[KB] product-specific payload selection failed: {e}")
+                logger.warning(f"Product-specific payload selection failed: {e}", exc_info=True)
         
         # Fallback to generic payload
         return self._generate_payload(strategy, task)
@@ -525,7 +558,6 @@ class AdvancedAIOrchestrator:
         kb_alternatives = []
         if target_info and target_info.get('product'):
             try:
-                from .fingerprinter import TargetFingerprint
                 mock_fp = TargetFingerprint(
                     url="",
                     product=target_info.get('product'),
@@ -549,8 +581,10 @@ class AdvancedAIOrchestrator:
                 )
                 
                 kb_alternatives = [rp.payload.payload for rp in adaptive[:3]]
-            except:
-                pass
+            except KeyError as e:
+                logger.error(f"Invalid vulnerability category for adaptive payload: {vulnerability}. Error: {e}")
+            except Exception as e:
+                logger.error(f"Failed to get adaptive KB payloads: {e}", exc_info=True)
         
         # Generate context-aware prompt
         prompt = self.prompt_optimizer.create_adaptive_prompt(
@@ -559,7 +593,7 @@ class AdvancedAIOrchestrator:
             failure_patterns=analysis['failure_patterns'],
             successful_patterns=analysis['successful_patterns'],
             target_info=target_info,
-            kb_alternatives=kb_alternatives  # NEW: Include KB suggestions
+            kb_alternatives=kb_alternatives
         )
         
         # Execute model
@@ -659,7 +693,7 @@ class ContextManager:
                 vulnerability_context={},
                 target_profile={},
                 exploitation_history=[],
-                fingerprint_data=fingerprint  # NEW
+                fingerprint_data=fingerprint
             )
         
         window = self.context_windows[context_key]
@@ -696,7 +730,7 @@ class ContextManager:
             'target': window.target_profile,
             'key_facts': window.key_facts + self.global_facts,
             'history': window.exploitation_history[-10:],  # Last 10 attempts
-            'fingerprint': window.fingerprint_data  # NEW
+            'fingerprint': window.fingerprint_data
         }
     
     def _compress_context(self, window: ContextWindow):
@@ -732,7 +766,7 @@ class ContextManager:
                 'timestamp': datetime.now().isoformat(),
                 'success': result.get('success', False),
                 'technique': result.get('technique', 'unknown'),
-                'fingerprint_match': result.get('fingerprint_match', False)  # NEW
+                'fingerprint_match': result.get('fingerprint_match', False)
             })
             
             # Extract key facts from successful attempts
