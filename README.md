@@ -119,53 +119,96 @@ make install-all        # Everything
 ## 📁 Project Structure
 
 ```
-cybershellV2/
-├── models/                             # ML models and training data
-│   └── adaptive/                       # Adaptive learning models
-├── reports/                            # Generated reports
-├── benchmarks/                         # Benchmark results
-├── cybershell/                         # Core framework
-│   ├── __init__.py
-│   ├── __main__.py                     # Entry point for module execution
-│   ├── orchestrator.py                 # Main orchestration engine
-│   ├── agent.py                        # Autonomous agent
-│   ├── plugins.py                      # Plugin base classes
-│   ├── scoring.py                      # Evidence scoring
-│   ├── strategies.py                   # Planning strategies
-│   ├── llm_connectors.py               # LLM integrations
-│   ├── config.py                       # Configuration management
-│   ├── reporting.py                    # Report generation
-│   ├── adaptive/                       # Adaptive learning modules
-│   │   ├── __init__.py
-│   │   ├── hitl.py
-│   │   ├── metrics.py
-│   │   ├── persistence.py
-│   │   ├── statemachine.py
-│   │   └── train.py
-│   ├── continuous_learning_pipeline.py    # ML training pipeline
-│   ├── business_impact_reporter.py        # Business reporting
-│   ├── benchmarking_framework.py          # Performance benchmarking
-│   ├── advanced_ai_orchestrator.py        # Multi-model AI
-│   ├── autonomous_orchestration_engine.py # True autonomy
-│   └── validation_framework.py            # Validation system
-├── plugins_user/                          # User plugins directory
-│   ├── exploitation_plugins.py            # Main exploit plugins
-│   ├── business_logic_plugin.py           # Business logic testing
-│   ├── anti_automation_plugin.py          # WAF bypass
-│   └── custom_plugins.py                  # Your custom plugins
-├── dashboard/                             # Web dashboard
-│   ├── streamlit_app.py
-│   └── components/
-├── docs/                                  # Documentation
-├── tests/                                 # Test suite
-├── __main__.py                            # Main entry point
-├── run_ctf.py                             # CTF helper script
-├── requirements.txt                       # Python dependencies
-├── requirements-llm.txt                   # LLM dependencies
-├── requirements-dashboard.txt             # Dashboard dependencies
-├── Makefile                               # Build automation
-├── config.yaml                            # Configuration file
-└── README.md                              # This file
+Directory structure:
+└── cybershellcode-cybershellv2/
+    ├── README.md
+    ├── __main__.py
+    ├── config.yaml
+    ├── fix_scope.py
+    ├── LICENSE
+    ├── Makefile
+    ├── pyproject.toml
+    ├── requirements-dashboard.txt
+    ├── requirements.txt
+    ├── run_ctf.py
+    ├── setup.py
+    ├── test_autonomous.py
+    ├── .env.example
+    ├── cybershell/
+    │   ├── __init__.py
+    │   ├── advanced_ai_orchestrator.py
+    │   ├── agent.py
+    │   ├── autonomous_orchestration_engine.py
+    │   ├── benchmarking_framework.py
+    │   ├── business_impact_reporter.py
+    │   ├── bypass_techniques.py
+    │   ├── chat.py
+    │   ├── config.py
+    │   ├── continuous_learning_pipeline.py
+    │   ├── fingerprint.py
+    │   ├── kb.py
+    │   ├── learning.py
+    │   ├── llm.py
+    │   ├── llm_connectors.py
+    │   ├── mapper.py
+    │   ├── memory.py
+    │   ├── miner.py
+    │   ├── ods.py
+    │   ├── orchestrator.py
+    │   ├── payload_manager.py
+    │   ├── philosophy.py
+    │   ├── planner.py
+    │   ├── plugin_loader.py
+    │   ├── plugins.py
+    │   ├── rate_limiter.py
+    │   ├── reporting.py
+    │   ├── schemas.py
+    │   ├── scoring.py
+    │   ├── signals.py
+    │   ├── strategies.py
+    │   ├── unified_config.py
+    │   ├── validation_framework.py
+    │   ├── vulnerability_kb.py
+    │   └── adaptive/
+    │       ├── __init__.py
+    │       ├── hitl.py
+    │       ├── metrics.py
+    │       ├── persistence.py
+    │       ├── statemachine.py
+    │       └── train.py
+    ├── dashboard/
+    │   ├── streamlit_app.py
+    │   └── components/
+    │       ├── __init__.py
+    │       ├── metrics.py
+    │       ├── reports.py
+    │       └── visualizations.py
+    ├── docs/
+    │   ├── FINGERPRINTING_AND_PAYLOAD_SELECTION.md
+    │   └── targets_xss_idor_cmdi.md
+    ├── knowledge_base/
+    │   ├── vulnerability_kb.json
+    │   └── custom_payloads/
+    │       ├── rce_custom.json
+    │       ├── request_smuggling_custom.json
+    │       ├── sqli_custom.json
+    │       ├── ssrf_custom.yaml
+    │       └── xss_custom.json
+    └── plugins_user/
+        ├── advanced_payload_plugin.py
+        ├── advanced_sqli_plugin.py
+        ├── anti_automation_plugin.py
+        ├── artifact_handling_plugin.py
+        ├── business_logic_plugin.py
+        ├── crypto_exploitation_plugin.py
+        ├── cve_research_plugin.py
+        ├── exploitation_chain_plugin.py
+        ├── exploitation_plugins.py
+        ├── protocol_specific_plugin.py
+        ├── self_healing_plugin.py
+        ├── state_manager_plugin.py
+        └── TemplateEvidencePlugin.py
+
 ```
 
 ## 🎮 Usage Modes
