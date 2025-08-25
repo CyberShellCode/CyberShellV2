@@ -49,18 +49,28 @@ class AutonomousBountyHunter:
         self.bot = bot
         self.run_dir = Path(run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True)
-        
+    
         self.findings: List[VulnerabilityFinding] = []
         self.run_id = uuid.uuid4().hex[:12]
         self.start_time = datetime.now()
-        
+    
         # Initialize exploitation strategies
         self.strategies = self._init_exploitation_strategies()
+    
+        # Initialize fingerprinting and payload management
+        try:
+            from .fingerprinter import Fingerprinter
+            from .vulnerability_kb import VulnerabilityKnowledgeBase
+            from .payload_manager import PayloadManager
         
-        # NEW: Initialize fingerprinting and payload management if available
-        self.fingerprinter = None
-        self.payload_manager = None
-        
+            self.fingerprinter = Fingerprinter()
+            kb = VulnerabilityKnowledgeBase()
+            self.payload_manager = PayloadManager(kb)
+        except ImportError as e:
+            print(f"[WARNING] Optional components not available: {e}")
+            self.fingerprinter = None
+            self.payload_manager = None
+    
         # Sub-agents for parallel exploitation
         self.sub_agents = {
             'sqli': SQLInjectionAgent(self.bot),
@@ -634,7 +644,7 @@ class SQLInjectionAgent:
                 response = self.bot.execute_plugin('SQLiExploitPlugin', {
                     'target': vuln['endpoint'],
                     'params': vuln['injectable_params'],
-                    'payload': payload_obj.payload,  # Use specific payload
+                    'payload': payload_obj.payload.payload,  # Use specific payload
                     'extract_data': not safe_mode,
                     'enumerate_db': True
                 })
@@ -708,7 +718,7 @@ class XSSAgent:
                 response = self.bot.execute_plugin('XSSExploitPlugin', {
                     'target': vuln['endpoint'],
                     'contexts': vuln['contexts'],
-                    'payload': payload_obj.payload,
+                    'payload': payload_obj.payload.payload,
                     'steal_session': not safe_mode,
                     'screenshot': True
                 })
@@ -837,7 +847,7 @@ class RCEAgent:
                 response = self.bot.execute_plugin('RCEExploitPlugin', {
                     'target': vuln['endpoint'],
                     'vectors': vuln['vectors'],
-                    'payload': payload_obj.payload,
+                    'payload': payload_obj.payload.payload,
                     'establish_shell': not safe_mode,
                     'system_enumeration': True,
                     'safe_demonstration': safe_mode
@@ -1022,7 +1032,7 @@ class SSRFAgent:
                 response = self.bot.execute_plugin('SSRFExploitPlugin', {
                     'target': vuln['endpoint'],
                     'params': vuln['vulnerable_params'],
-                    'payload': payload_obj.payload,
+                    'payload': payload_obj.payload.payload,
                     'access_metadata': not safe_mode,
                     'scan_internal': True
                 })
@@ -1095,7 +1105,7 @@ class XXEAgent:
                 response = self.bot.execute_plugin('XXEExploitPlugin', {
                     'target': vuln['endpoint'],
                     'parsers': vuln['parsers'],
-                    'payload': payload_obj.payload,
+                    'payload': payload_obj.payload.payload,
                     'extract_files': not safe_mode,
                     'files': ['/etc/passwd', '/etc/shadow', 'web.config', '.env']
                 })
