@@ -21,6 +21,7 @@ python-docx>=0.8.11
 beautifulsoup4>=4.12.0
 lxml>=4.9.0
 jinja2>=3.1.2
+packaging>=23.0.0
 
 # Security & Crypto
 pycryptodome>=3.18.0
