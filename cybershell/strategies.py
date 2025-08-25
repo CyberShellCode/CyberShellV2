@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 from abc import ABC, abstractmethod
+from .signals import SignalEvent
 
 # Import your existing PlanStep from planner
 from .planner import PlanStep
@@ -224,7 +225,6 @@ class BreadthFirstPlanner(BasePlannerStrategy):
 
         # Phase 3: Single mapper hint
         if mapper and signals_text:
-            from .adaptive.signals import SignalEvent
             evt = SignalEvent(notes=signals_text)
             m = mapper.map(evt)
 
@@ -318,7 +318,6 @@ class AggressivePlanner(BasePlannerStrategy):
 
         # Phase 4: Mapper-guided aggressive exploitation
         if mapper and signals_text:
-            from .adaptive.signals import SignalEvent
             evt = SignalEvent(notes=signals_text)
             m = mapper.map(evt)
 
@@ -403,7 +402,6 @@ class AdaptivePlanner(BasePlannerStrategy):
         confidence_level = 0.0
 
         if mapper and signals_text:
-            from .adaptive.signals import SignalEvent
             evt = SignalEvent(notes=signals_text)
             m = mapper.map(evt)
             if m.top_families:
@@ -420,7 +418,6 @@ class AdaptivePlanner(BasePlannerStrategy):
 
         # Adaptive testing based on mapper confidence
         if mapper and signals_text:
-            from .adaptive.signals import SignalEvent
             evt = SignalEvent(notes=signals_text)
             m = mapper.map(evt)
 
