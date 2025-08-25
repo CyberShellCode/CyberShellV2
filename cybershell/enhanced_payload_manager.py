@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from urllib.parse import urlparse, urljoin
 from .vulnerability_kb import VulnerabilityKnowledgeBase, VulnCategory, VulnPayload
 from .fingerprinter import TargetFingerprint
+from .payload_manager import RankedPayload
 
 @dataclass
 class PayloadContext:
