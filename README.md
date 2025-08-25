@@ -39,34 +39,34 @@ CyberShell v2.0 is an enterprise-grade autonomous exploitation framework that co
 
 ### Core Components
 
- **Orchestrator (`orchestrator.py`)**
+ * **Orchestrator (`orchestrator.py`)**
     * Central command system coordinating all operations.
     * Manages plugin execution, evidence scoring, and result aggregation.
     * Integrates LLM for intelligent planning.
- **Autonomous Agent (`agent.py`)**
+ * **Autonomous Agent (`agent.py`)**
     * Multi-phase exploitation: Recon → Discovery → Exploitation → Impact.
     * Sub-agent management for parallel vulnerability testing.
     * Automatic payload selection based on fingerprinting.
- **Payload Management (`payload_manager.py`, `enhanced_payload_manager.py`)**
+ * **Payload Management (`payload_manager.py`, `enhanced_payload_manager.py`)**
     * Intelligent payload ranking based on target fingerprint.
     * Dynamic context adaptation (parameter, header, path injection).
     * Success history tracking for improved selection.
- **IDOR/BOLA Hunter (`advanced_idor_hunter.py`)**
+ * **IDOR/BOLA Hunter (`advanced_idor_hunter.py`)**
     * Credential brute-forcing with lockout prevention.
     * JWT token analysis and manipulation.
     * GraphQL introspection and exploitation.
     * Endpoint discovery through JS analysis and crawling.
- **Learning Pipeline (`continuous_learning_pipeline.py`)**
+ * **Learning Pipeline (`continuous_learning_pipeline.py`)**
     * Real-time model training from exploitation attempts.
     * Success probability prediction.
     * False positive detection.
     * Adaptive payload optimization.
- **Business Impact Reporter (`business_impact_reporter.py`)**
+  * **Business Impact Reporter (`business_impact_reporter.py`)**
     * Financial impact calculation with ROI analysis.
     * Compliance violation assessment (GDPR, SOC2, ISO27001).
     * Executive-ready HTML/PDF reports with visualizations.
     * Risk matrix and remediation roadmap generation.
- **Benchmarking Framework (`benchmarking_framework.py`)**
+  * **Benchmarking Framework (`benchmarking_framework.py`)**
     * Performance comparison with other security tools.
     * Resource usage monitoring.
     * Scalability testing with stress suites.
