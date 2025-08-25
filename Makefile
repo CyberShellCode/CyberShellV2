@@ -14,7 +14,7 @@ ACT := . $(VENV)/bin/activate
 .DEFAULT_GOAL := all
 
 # Declare phony targets
-.PHONY: all test venv install install-llm install-dashboard run demo openai ollama dashboard clean test-unit test-integration lint
+.PHONY: all test venv install install-llm install-dashboard run demo openai ollama dashboard clean test-unit test-integration lint help
 
 # Default target - builds the environment
 all: venv install
@@ -58,43 +58,49 @@ install: venv
 	$(ACT) && $(PIP) install -r requirements.txt
 
 # Install LLM requirements
-install-llm: venv
-	@echo "🤖 Installing LLM requirements..."
+install-llm: install
+	@echo "Installing LLM requirements..."
 	$(ACT) && $(PIP) install -r requirements-llm.txt
 
 # Install dashboard requirements
-install-dashboard: venv
+install-dashboard: install
 	@echo "Installing dashboard requirements..."
 	$(ACT) && $(PIP) install -r requirements-dashboard.txt
 
 # Run with default configuration
-run:
+run: install
 	@echo "Starting CyberShellV2..."
 	$(ACT) && $(PYTHON) -m cybershell http://localhost:8000 --planner depth_first --scorer weighted_signal --llm none
 
 # Run demo
-demo: run
+demo: install
+	@echo "Running CyberShellV2 demo..."
+	$(ACT) && $(PYTHON) -m cybershell http://localhost:8000 --planner depth_first --scorer weighted_signal --llm none
 
 # Run with OpenAI
-openai:
+openai: install-llm
 	@echo "Starting with OpenAI LLM..."
-	# Requires OPENAI_API_KEY env var
+	@if [ -z "$$OPENAI_API_KEY" ]; then \
+		echo "ERROR: OPENAI_API_KEY environment variable is not set"; \
+		echo "Please set it with: export OPENAI_API_KEY='your-api-key'"; \
+		exit 1; \
+	fi
 	$(ACT) && $(PYTHON) -m cybershell http://localhost:8000 --planner depth_first --scorer weighted_signal --llm openai
 
 # Run with Ollama
-ollama:
+ollama: install-llm
 	@echo "Starting with Ollama LLM..."
-	# Make sure ollama is running locally
+	@echo "Note: Make sure ollama is running locally (ollama serve)"
 	$(ACT) && $(PYTHON) -m cybershell http://localhost:8000 --planner breadth_first --scorer high_confidence --llm ollama
 
 # Run dashboard
-dashboard:
+dashboard: install-dashboard
 	@echo "Starting Streamlit dashboard..."
 	$(ACT) && streamlit run dashboard/streamlit_app.py
 
 # Clean up artifacts
 clean:
-	@echo " Cleaning up..."
+	@echo "Cleaning up..."
 	rm -rf $(VENV) **pycache** .pytest_cache .mypy_cache
 	find . -name "__pycache__" -type d -prune -exec rm -rf {} \;
 	find . -name "*.pyc" -delete
@@ -115,8 +121,8 @@ help:
 	@echo "  make test-integration - Run integration tests only"
 	@echo "  make lint            - Run code linters"
 	@echo "  make run             - Run CyberShellV2 with default config"
-	@echo "  make demo            - Run demo (same as run)"
-	@echo "  make openai          - Run with OpenAI LLM"
+	@echo "  make demo            - Run demo"
+	@echo "  make openai          - Run with OpenAI LLM (requires OPENAI_API_KEY)"
 	@echo "  make ollama          - Run with Ollama LLM"
 	@echo "  make dashboard       - Start Streamlit dashboard"
 	@echo "  make install-llm     - Install LLM dependencies"
