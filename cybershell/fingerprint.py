@@ -1,649 +1,574 @@
-"""
-Target Fingerprinting Module
-============================
-Identifies target technology stack, versions, and configurations
-"""
-
-import re
+from dataclasses import dataclass, field, asdict
+from typing import Dict, Any, List, Type, Optional, Tuple
+import time
 import json
-import socket
-import ssl
-import hashlib
-from typing import Dict, List, Optional, Tuple, Any
-from dataclasses import dataclass, field
-from urllib.parse import urlparse
-import requests
-from bs4 import BeautifulSoup
-import concurrent.futures
+from pathlib import Path
 from datetime import datetime
+import asyncio
+
+# Import unified configuration
+from .unified_config import UnifiedConfig, get_config, initialize_config
+
+# Existing imports
+from .plugins import PluginBase, PluginResult
+from .plugin_loader import load_user_plugins
+from .strategies import get_planner
+from .scoring import get_scorer
+from .ods import OutcomeDirectedSearch, ODSConfig, EvidenceAggregator
+from .miner import DocumentMiner
+from .mapper import AdaptiveLearningMapper
+from .llm import LLMConnector
+from .reporting import ReportBuilder
+from .agent import AutonomousBountyHunter, BountyConfig
+
+# New enhanced modules
+from cybershell.vulnerability_kb import VulnerabilityKBPlugin
+from cybershell.bypass_techniques import BypassPlugin
+from .continuous_learning_pipeline import ContinuousLearningPipeline, ExploitAttempt
+from .business_impact_reporter import BusinessImpactReporter, VulnerabilityFinding
+from .benchmarking_framework import BenchmarkingFramework, BenchmarkTarget, BenchmarkResult
+from .advanced_ai_orchestrator import AdvancedAIOrchestrator, ModelCapability
+from .autonomous_orchestration_engine import (
+    AutonomousOrchestrationEngine, 
+    AutonomousGoal, 
+    ExploitationState,
+    DecisionPriority
+)
+from .validation_framework import (
+    RealWorldValidationFramework,
+    ValidationResult,
+    ValidationEvidence,
+    EvidenceType,
+    ValidationStrength
+)
+
+# NEW: Import fingerprinting and payload management
+from .fingerprinter import Fingerprinter, TargetFingerprint
+from .payload_manager import PayloadManager, SmartPayloadSelector
 
 @dataclass
-class TargetFingerprint:
-    """Structured fingerprint of target system"""
-    url: str
-    product: Optional[str] = None  # Primary product (nginx, apache, wordpress)
-    version: Optional[str] = None  # Version string (1.14.0, 2.4.41)
-    technologies: List[str] = field(default_factory=list)  # All detected techs
-    server: Optional[str] = None  # Server header value
-    os: Optional[str] = None  # Operating system if detected
-    frameworks: List[str] = field(default_factory=list)  # Web frameworks
-    cms: Optional[str] = None  # Content Management System
-    cdn: Optional[str] = None  # CDN provider
-    waf: Optional[str] = None  # Web Application Firewall
-    cloud_provider: Optional[str] = None  # AWS, GCP, Azure
-    
-    # Raw signals for analysis
-    raw_signals: Dict[str, Any] = field(default_factory=dict)
-    headers: Dict[str, str] = field(default_factory=dict)
-    cookies: List[Dict] = field(default_factory=list)
-    meta_tags: Dict[str, str] = field(default_factory=dict)
-    ssl_info: Dict[str, Any] = field(default_factory=dict)
-    
-    # Confidence scores
-    confidence: Dict[str, float] = field(default_factory=dict)
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+class ExploitationMetrics:
+    """Metrics for exploitation tracking"""
+    total_attempts: int = 0
+    successful_exploits: int = 0
+    failed_exploits: int = 0
+    total_time: float = 0
+    vulnerabilities_found: List[str] = field(default_factory=list)
+    fingerprints_collected: int = 0  # NEW
 
-class Fingerprinter:
-    """Main fingerprinting engine"""
+class CyberShell:
+    """
+    Main orchestrator for CyberShell framework
+    Now with unified configuration, enhanced modules, and intelligent payload selection
+    """
     
-    def __init__(self, config: Optional[Dict] = None):
-        self.config = config or {}
-        self.timeout = self.config.get('timeout', 10)
-        self.aggressive = self.config.get('aggressive', False)
-        self.use_external_tools = self.config.get('use_external_tools', False)
+    def __init__(self, config: Optional[Dict] = None, args=None):
+        """Initialize CyberShell with unified configuration"""
         
-        # Initialize signature database
-        self.signatures = self._load_signatures()
+        # Initialize unified configuration
+        if args:
+            self.config = initialize_config(args=args)
+        elif config:
+            self.config = initialize_config(config_dict=config)
+        else:
+            self.config = initialize_config()
         
-    def _load_signatures(self) -> Dict:
-        """Load fingerprinting signatures"""
-        return {
-            'servers': {
-                'nginx': {
-                    'headers': [r'nginx/?([\d\.]+)?', r'openresty/?([\d\.]+)?'],
-                    'error_pages': ['nginx', '301 Moved Permanently'],
-                    'confidence': 0.9
-                },
-                'apache': {
-                    'headers': [r'Apache/?([\d\.]+)?', r'Apache-Coyote/?([\d\.]+)?'],
-                    'error_pages': ['Apache Server', 'Apache/'],
-                    'confidence': 0.9
-                },
-                'iis': {
-                    'headers': [r'Microsoft-IIS/?([\d\.]+)?'],
-                    'error_pages': ['IIS Windows Server'],
-                    'confidence': 0.9
-                },
-                'cloudflare': {
-                    'headers': [r'cloudflare'],
-                    'cookies': ['__cfduid', 'cf_clearance'],
-                    'confidence': 0.95
-                }
-            },
-            'frameworks': {
-                'django': {
-                    'cookies': ['csrftoken', 'sessionid'],
-                    'headers': ['WSGIServer'],
-                    'patterns': ['django', 'csrfmiddlewaretoken'],
-                    'confidence': 0.8
-                },
-                'flask': {
-                    'cookies': ['session'],
-                    'headers': ['Werkzeug'],
-                    'confidence': 0.7
-                },
-                'rails': {
-                    'headers': ['X-Runtime', 'X-Rack-Cache'],
-                    'cookies': ['_session_id'],
-                    'patterns': ['authenticity_token'],
-                    'confidence': 0.8
-                },
-                'laravel': {
-                    'cookies': ['laravel_session', 'XSRF-TOKEN'],
-                    'patterns': ['laravel', '_token'],
-                    'confidence': 0.85
-                },
-                'express': {
-                    'headers': ['X-Powered-By: Express'],
-                    'confidence': 0.9
-                },
-                'aspnet': {
-                    'headers': ['X-AspNet-Version', 'X-AspNetMvc-Version'],
-                    'cookies': ['ASP.NET_SessionId'],
-                    'patterns': ['__VIEWSTATE', '__EVENTVALIDATION'],
-                    'confidence': 0.9
-                }
-            },
-            'cms': {
-                'wordpress': {
-                    'patterns': ['/wp-content/', '/wp-includes/', 'wp-json'],
-                    'meta': ['generator.*WordPress'],
-                    'endpoints': ['/wp-login.php', '/wp-admin/'],
-                    'version_endpoint': '/feed/',  # Contains version in generator tag
-                    'confidence': 0.95
-                },
-                'drupal': {
-                    'patterns': ['/sites/default/', 'Drupal.settings'],
-                    'meta': ['generator.*Drupal'],
-                    'headers': ['X-Drupal-Cache'],
-                    'endpoints': ['/user/login', '/admin'],
-                    'confidence': 0.9
-                },
-                'joomla': {
-                    'patterns': ['/components/', '/modules/', 'Joomla'],
-                    'meta': ['generator.*Joomla'],
-                    'endpoints': ['/administrator/'],
-                    'confidence': 0.9
-                }
-            },
-            'technologies': {
-                'jquery': {
-                    'patterns': ['jquery', 'jQuery'],
-                    'confidence': 0.8
-                },
-                'react': {
-                    'patterns': ['react', 'React', '_react', '__react'],
-                    'confidence': 0.85
-                },
-                'angular': {
-                    'patterns': ['ng-', 'angular', 'Angular'],
-                    'confidence': 0.85
-                },
-                'vue': {
-                    'patterns': ['Vue', 'v-', '__vue'],
-                    'confidence': 0.8
-                }
-            },
-            'databases': {
-                'mysql': {
-                    'error_patterns': ['MySQL', 'mysql_', 'mysqli'],
-                    'ports': [3306],
-                    'confidence': 0.7
-                },
-                'postgresql': {
-                    'error_patterns': ['PostgreSQL', 'pg_', 'psql'],
-                    'ports': [5432],
-                    'confidence': 0.7
-                },
-                'mongodb': {
-                    'error_patterns': ['MongoDB', 'mongo'],
-                    'ports': [27017],
-                    'confidence': 0.7
-                }
+        # Validate configuration
+        issues = self.config.validate()
+        if issues:
+            print(f"[WARNING] Configuration issues: {issues}")
+        
+        # Core configuration shortcuts
+        self.safety_config = self.config.safety
+        self.bounty_config = self.config.bounty
+        self.exploitation_config = self.config.exploitation
+        self.llm_config = self.config.llm
+        
+        # Initialize core components
+        self.plugins = self._load_plugins()
+        self.planner = get_planner(self.config.exploitation.max_parallel_exploits)
+        self.scorer = get_scorer('default')
+        self.metrics = ExploitationMetrics()
+        
+        # NEW: Initialize fingerprinting and payload management
+        self.fingerprinter = Fingerprinter({
+            'timeout': self.config.exploitation.request_timeout,
+            'aggressive': self.config.exploitation.aggressive_mode,
+            'use_external_tools': False  # Can be configured
+        })
+        
+        self.vuln_kb = VulnerabilityKBPlugin(self.config)
+        self.payload_selector = SmartPayloadSelector()
+        self.payload_manager = PayloadManager(self.vuln_kb.kb)
+        
+        # Cache for fingerprints
+        self.fingerprint_cache = {}
+        
+        # Initialize enhanced modules
+        self._initialize_enhanced_modules()
+        
+        # Initialize ODS if configured
+        if self.config.autonomy.enable_autonomy:
+            self.ods = OutcomeDirectedSearch(ODSConfig())
+            self.evidence_aggregator = EvidenceAggregator()
+        
+        # Initialize LLM if configured
+        if self.config.llm.provider != 'none':
+            self.llm_connector = LLMConnector(
+                provider=self.config.llm.provider,
+                model=self.config.llm.model,
+                base_url=self.config.llm.base_url,
+                api_key=self.config.llm.api_key
+            )
+        else:
+            self.llm_connector = None
+        
+        # Initialize reporting
+        self.report_builder = ReportBuilder(self.config.reporting)
+        
+        # Initialize agent if in autonomous mode
+        if self.config.autonomy.enable_autonomy:
+            self.agent = AutonomousBountyHunter(
+                self.config.bounty,
+                self.safety_config
+            )
+            # Wire in payload manager to agent
+            self.agent.payload_manager = self.payload_manager
+            self.agent.fingerprinter = self.fingerprinter
+    
+    def _initialize_enhanced_modules(self):
+        """Initialize all enhanced modules with unified config"""
+        
+        # Machine Learning Pipeline
+        self.learning_pipeline = ContinuousLearningPipeline(
+            model_dir=self.config.learning.model_dir
+        )
+        
+        # Business Impact Reporter
+        self.impact_reporter = BusinessImpactReporter(
+            company_profile=self.config.reporting.company_profile
+        )
+        
+        # Benchmarking Framework
+        if self.config.benchmarking.enable_benchmarking:
+            self.benchmark_framework = BenchmarkingFramework(
+                config_file=self.config.config_file
+            )
+        else:
+            self.benchmark_framework = None
+        
+        # Advanced AI Orchestrator
+        self.ai_orchestrator = AdvancedAIOrchestrator(
+            config={
+                'max_parallel_models': self.config.exploitation.max_parallel_exploits,
+                'exploration_rate': self.config.learning.exploration_rate
             }
-        }
+        )
+        
+        # Autonomous Orchestration Engine
+        self.autonomous_engine = AutonomousOrchestrationEngine(
+            config={
+                'max_autonomous_actions': self.config.autonomy.max_autonomous_actions,
+                'decision_timeout': self.config.autonomy.decision_timeout,
+                'learning_rate': self.config.learning.learning_rate
+            }
+        )
+        
+        # Set scope for autonomous engine
+        self.autonomous_engine.set_scope(
+            allowed=self.config.safety.scope_hosts,
+            excluded=self.config.safety.out_of_scope_patterns
+        )
+        
+        # Validation Framework
+        self.validation_framework = RealWorldValidationFramework(
+            config={
+                'min_confidence_threshold': self.config.validation.min_confidence_threshold,
+                'require_multiple_evidence': self.config.validation.require_multiple_evidence,
+                'max_validation_attempts': self.config.validation.max_validation_attempts
+            }
+        )
+        
+        # Wire up scope checking
+        self.validation_framework.scope_checker = self.safety_config.is_in_scope
     
-    def fingerprint(self, target: str, aggressive: bool = False) -> TargetFingerprint:
+    def _load_plugins(self) -> Dict[str, PluginBase]:
+        """Load plugins from user directory"""
+        if self.config.plugin.enable_user_plugins:
+            plugins = load_user_plugins(self.config.plugin.plugins_dir)
+            
+            # Apply whitelist/blacklist
+            if self.config.plugin.plugin_whitelist:
+                plugins = {k: v for k, v in plugins.items() 
+                          if k in self.config.plugin.plugin_whitelist}
+            
+            if self.config.plugin.plugin_blacklist:
+                plugins = {k: v for k, v in plugins.items() 
+                          if k not in self.config.plugin.plugin_blacklist}
+            
+            return plugins
+        return {}
+    
+    def check_scope(self, target: str) -> bool:
+        """Check if target is in scope using unified config"""
+        return self.safety_config.is_in_scope(target)
+    
+    def fingerprint_target(self, target: str, use_cache: bool = True) -> TargetFingerprint:
         """
-        Perform fingerprinting on target
+        Fingerprint target and cache results
         
         Args:
             target: Target URL
-            aggressive: Enable aggressive fingerprinting (more requests)
+            use_cache: Whether to use cached fingerprint if available
             
         Returns:
-            TargetFingerprint object with identified technologies
+            TargetFingerprint object
         """
-        fingerprint = TargetFingerprint(url=target)
+        # Check cache
+        if use_cache and target in self.fingerprint_cache:
+            cached = self.fingerprint_cache[target]
+            # Check if cache is still fresh (5 minutes)
+            if (datetime.now() - datetime.fromisoformat(cached.timestamp)).seconds < 300:
+                print(f"[FINGERPRINT] Using cached fingerprint for {target}")
+                return cached
         
-        # Parse URL
-        parsed = urlparse(target)
-        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        # Perform fingerprinting
+        print(f"[FINGERPRINT] Fingerprinting {target}...")
+        fingerprint = self.fingerprinter.fingerprint(
+            target,
+            aggressive=self.config.exploitation.aggressive_mode
+        )
         
-        # Passive fingerprinting first
-        self._passive_fingerprint(fingerprint, target)
+        # Cache result
+        self.fingerprint_cache[target] = fingerprint
+        self.metrics.fingerprints_collected += 1
         
-        # Light active fingerprinting
-        if aggressive or self.aggressive:
-            self._active_fingerprint(fingerprint, base_url)
-        
-        # Analyze and consolidate results
-        self._analyze_fingerprint(fingerprint)
-        
-        # External tools if configured
-        if self.use_external_tools:
-            self._external_fingerprint(fingerprint, target)
+        # Log summary
+        print(f"[FINGERPRINT] Detected: {fingerprint.product} {fingerprint.version or 'unknown version'}")
+        if fingerprint.technologies:
+            print(f"[FINGERPRINT] Technologies: {', '.join(fingerprint.technologies)}")
+        if fingerprint.waf:
+            print(f"[FINGERPRINT] WAF detected: {fingerprint.waf}")
         
         return fingerprint
     
-    def _passive_fingerprint(self, fingerprint: TargetFingerprint, target: str):
-        """Passive fingerprinting using single request"""
-        try:
-            # Make initial request
-            response = requests.get(
-                target,
-                timeout=self.timeout,
-                headers={'User-Agent': 'Mozilla/5.0 (compatible; SecurityScanner/1.0)'},
-                verify=False,
-                allow_redirects=True
-            )
-            
-            # Extract headers
-            fingerprint.headers = dict(response.headers)
-            fingerprint.raw_signals['status_code'] = response.status_code
-            fingerprint.raw_signals['response_size'] = len(response.content)
-            
-            # Extract cookies
-            for cookie in response.cookies:
-                fingerprint.cookies.append({
-                    'name': cookie.name,
-                    'domain': cookie.domain,
-                    'secure': cookie.secure,
-                    'httponly': cookie.has_nonstandard_attr('HttpOnly')
-                })
-            
-            # Parse HTML content
-            if 'text/html' in response.headers.get('Content-Type', ''):
-                self._parse_html(fingerprint, response.text)
-            
-            # Server header analysis
-            server_header = response.headers.get('Server', '')
-            if server_header:
-                fingerprint.server = server_header
-                self._parse_server_header(fingerprint, server_header)
-            
-            # Powered-By header
-            powered_by = response.headers.get('X-Powered-By', '')
-            if powered_by:
-                fingerprint.raw_signals['powered_by'] = powered_by
-                self._parse_powered_by(fingerprint, powered_by)
-            
-            # SSL/TLS information
-            self._get_ssl_info(fingerprint, target)
-            
-        except Exception as e:
-            fingerprint.raw_signals['error'] = str(e)
-    
-    def _parse_html(self, fingerprint: TargetFingerprint, html: str):
-        """Parse HTML for technology indicators"""
-        try:
-            soup = BeautifulSoup(html, 'html.parser')
-            
-            # Extract meta tags
-            for meta in soup.find_all('meta'):
-                name = meta.get('name', '') or meta.get('property', '')
-                content = meta.get('content', '')
-                if name and content:
-                    fingerprint.meta_tags[name] = content
-                    
-                    # Check for generator tag (CMS indicator)
-                    if name.lower() == 'generator':
-                        self._parse_generator_tag(fingerprint, content)
-            
-            # Look for technology patterns in HTML
-            html_lower = html.lower()
-            
-            # Check CMS patterns
-            for cms_name, cms_data in self.signatures['cms'].items():
-                for pattern in cms_data.get('patterns', []):
-                    if pattern.lower() in html_lower:
-                        fingerprint.cms = cms_name
-                        fingerprint.confidence[f'cms_{cms_name}'] = cms_data['confidence']
-                        break
-            
-            # Check framework patterns
-            for fw_name, fw_data in self.signatures['frameworks'].items():
-                for pattern in fw_data.get('patterns', []):
-                    if pattern.lower() in html_lower:
-                        if fw_name not in fingerprint.frameworks:
-                            fingerprint.frameworks.append(fw_name)
-                            fingerprint.confidence[f'framework_{fw_name}'] = fw_data['confidence']
-            
-            # Check JavaScript libraries
-            for tech_name, tech_data in self.signatures['technologies'].items():
-                for pattern in tech_data.get('patterns', []):
-                    if pattern.lower() in html_lower:
-                        if tech_name not in fingerprint.technologies:
-                            fingerprint.technologies.append(tech_name)
-                            fingerprint.confidence[f'tech_{tech_name}'] = tech_data['confidence']
-            
-            # Extract all script sources
-            scripts = soup.find_all('script', src=True)
-            fingerprint.raw_signals['scripts'] = [s['src'] for s in scripts]
-            
-            # Extract all link hrefs
-            links = soup.find_all('link', href=True)
-            fingerprint.raw_signals['stylesheets'] = [l['href'] for l in links if 'stylesheet' in l.get('rel', [])]
-            
-        except Exception as e:
-            fingerprint.raw_signals['html_parse_error'] = str(e)
-    
-    def _parse_server_header(self, fingerprint: TargetFingerprint, server_header: str):
-        """Parse server header for product and version"""
-        for server_name, server_data in self.signatures['servers'].items():
-            for pattern in server_data.get('headers', []):
-                match = re.search(pattern, server_header, re.IGNORECASE)
-                if match:
-                    fingerprint.product = server_name
-                    if match.groups():
-                        fingerprint.version = match.group(1)
-                    fingerprint.confidence[f'server_{server_name}'] = server_data['confidence']
-                    return
-    
-    def _parse_powered_by(self, fingerprint: TargetFingerprint, powered_by: str):
-        """Parse X-Powered-By header"""
-        # PHP version
-        php_match = re.search(r'PHP/?([\d\.]+)?', powered_by, re.IGNORECASE)
-        if php_match:
-            fingerprint.technologies.append('PHP')
-            if php_match.group(1):
-                fingerprint.raw_signals['php_version'] = php_match.group(1)
+    async def run_exploitation(self, target: str) -> Dict:
+        """Run exploitation with all enhanced features including fingerprinting"""
         
-        # ASP.NET
-        if 'ASP.NET' in powered_by:
-            fingerprint.technologies.append('ASP.NET')
-            fingerprint.frameworks.append('aspnet')
+        # Check scope
+        if not self.check_scope(target):
+            print(f"[SCOPE] Target {target} is out of scope!")
+            return {'error': 'out_of_scope'}
         
-        # Express
-        if 'Express' in powered_by:
-            fingerprint.frameworks.append('express')
-            fingerprint.technologies.append('Node.js')
-    
-    def _parse_generator_tag(self, fingerprint: TargetFingerprint, content: str):
-        """Parse generator meta tag for CMS and version"""
-        # WordPress
-        wp_match = re.search(r'WordPress\s*([\d\.]+)?', content, re.IGNORECASE)
-        if wp_match:
-            fingerprint.cms = 'wordpress'
-            if wp_match.group(1):
-                fingerprint.raw_signals['wordpress_version'] = wp_match.group(1)
+        print(f"[*] Starting exploitation of {target}")
+        start_time = time.time()
         
-        # Drupal
-        drupal_match = re.search(r'Drupal\s*([\d\.]+)?', content, re.IGNORECASE)
-        if drupal_match:
-            fingerprint.cms = 'drupal'
-            if drupal_match.group(1):
-                fingerprint.raw_signals['drupal_version'] = drupal_match.group(1)
+        # NEW: Fingerprint target first
+        fingerprint = self.fingerprint_target(target)
         
-        # Joomla
-        joomla_match = re.search(r'Joomla!\s*([\d\.]+)?', content, re.IGNORECASE)
-        if joomla_match:
-            fingerprint.cms = 'joomla'
-            if joomla_match.group(1):
-                fingerprint.raw_signals['joomla_version'] = joomla_match.group(1)
-    
-    def _get_ssl_info(self, fingerprint: TargetFingerprint, target: str):
-        """Extract SSL/TLS certificate information"""
-        try:
-            parsed = urlparse(target)
-            if parsed.scheme != 'https':
-                return
-            
-            hostname = parsed.hostname
-            port = parsed.port or 443
-            
-            # Create SSL context
-            context = ssl.create_default_context()
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
-            
-            # Connect and get certificate
-            with socket.create_connection((hostname, port), timeout=self.timeout) as sock:
-                with context.wrap_socket(sock, server_hostname=hostname) as ssock:
-                    cert = ssock.getpeercert()
-                    
-                    if cert:
-                        fingerprint.ssl_info = {
-                            'issuer': dict(x[0] for x in cert.get('issuer', [])),
-                            'subject': dict(x[0] for x in cert.get('subject', [])),
-                            'version': cert.get('version'),
-                            'serial_number': cert.get('serialNumber'),
-                            'not_before': cert.get('notBefore'),
-                            'not_after': cert.get('notAfter'),
-                            'san': cert.get('subjectAltName', [])
-                        }
-                        
-                        # Check for CDN/Cloud providers
-                        issuer_org = fingerprint.ssl_info['issuer'].get('organizationName', '')
-                        if 'CloudFlare' in issuer_org:
-                            fingerprint.cdn = 'cloudflare'
-                        elif 'Amazon' in issuer_org:
-                            fingerprint.cloud_provider = 'aws'
-                        elif 'Google' in issuer_org:
-                            fingerprint.cloud_provider = 'gcp'
-                        elif 'Microsoft' in issuer_org:
-                            fingerprint.cloud_provider = 'azure'
-                    
-                    # Get TLS version and cipher
-                    fingerprint.ssl_info['tls_version'] = ssock.version()
-                    fingerprint.ssl_info['cipher'] = ssock.cipher()
-                    
-        except Exception as e:
-            fingerprint.ssl_info['error'] = str(e)
-    
-    def _active_fingerprint(self, fingerprint: TargetFingerprint, base_url: str):
-        """Active fingerprinting with additional requests"""
-        # Test common endpoints
-        endpoints = [
-            '/robots.txt',
-            '/sitemap.xml',
-            '/.git/config',
-            '/README.md',
-            '/package.json',
-            '/composer.json',
-            '/.env',
-            '/wp-login.php',  # WordPress
-            '/admin',  # Generic admin
-            '/api',  # API endpoint
-            '/graphql',  # GraphQL
-            '/.well-known/security.txt'
-        ]
-        
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-            futures = []
-            for endpoint in endpoints:
-                future = executor.submit(self._check_endpoint, base_url + endpoint)
-                futures.append((endpoint, future))
-            
-            for endpoint, future in futures:
-                try:
-                    result = future.result(timeout=5)
-                    if result:
-                        fingerprint.raw_signals[f'endpoint_{endpoint}'] = result
-                        self._analyze_endpoint_result(fingerprint, endpoint, result)
-                except:
-                    pass
-    
-    def _check_endpoint(self, url: str) -> Optional[Dict]:
-        """Check if endpoint exists and return info"""
-        try:
-            response = requests.get(
-                url,
-                timeout=5,
-                headers={'User-Agent': 'Mozilla/5.0'},
-                verify=False,
-                allow_redirects=False
-            )
-            
-            if response.status_code in [200, 301, 302, 401, 403]:
-                return {
-                    'status': response.status_code,
-                    'size': len(response.content),
-                    'content_type': response.headers.get('Content-Type', ''),
-                    'content_sample': response.text[:500] if response.status_code == 200 else None
-                }
-        except:
-            pass
-        return None
-    
-    def _analyze_endpoint_result(self, fingerprint: TargetFingerprint, endpoint: str, result: Dict):
-        """Analyze endpoint check results"""
-        if endpoint == '/wp-login.php' and result['status'] == 200:
-            fingerprint.cms = 'wordpress'
-            fingerprint.confidence['cms_wordpress'] = 0.99
-        
-        elif endpoint == '/package.json' and result['status'] == 200:
-            try:
-                package = json.loads(result.get('content_sample', '{}'))
-                fingerprint.technologies.append('Node.js')
-                if 'dependencies' in package:
-                    for dep in package['dependencies']:
-                        if 'react' in dep:
-                            fingerprint.technologies.append('React')
-                        elif 'vue' in dep:
-                            fingerprint.technologies.append('Vue')
-                        elif 'angular' in dep:
-                            fingerprint.technologies.append('Angular')
-            except:
-                pass
-        
-        elif endpoint == '/composer.json' and result['status'] == 200:
-            fingerprint.technologies.append('PHP')
-            try:
-                composer = json.loads(result.get('content_sample', '{}'))
-                if 'require' in composer:
-                    for req in composer['require']:
-                        if 'laravel' in req:
-                            fingerprint.frameworks.append('laravel')
-                        elif 'symfony' in req:
-                            fingerprint.frameworks.append('symfony')
-            except:
-                pass
-    
-    def _analyze_fingerprint(self, fingerprint: TargetFingerprint):
-        """Analyze and consolidate fingerprint data"""
-        # Set primary product if not already set
-        if not fingerprint.product and fingerprint.cms:
-            fingerprint.product = fingerprint.cms
-            
-        # Extract version from various sources
-        if not fingerprint.version:
-            # Try CMS versions
-            if fingerprint.cms == 'wordpress':
-                fingerprint.version = fingerprint.raw_signals.get('wordpress_version')
-            elif fingerprint.cms == 'drupal':
-                fingerprint.version = fingerprint.raw_signals.get('drupal_version')
-            elif fingerprint.cms == 'joomla':
-                fingerprint.version = fingerprint.raw_signals.get('joomla_version')
-        
-        # Detect WAF
-        self._detect_waf(fingerprint)
-        
-        # Detect cloud provider from headers
-        self._detect_cloud_provider(fingerprint)
-        
-        # Calculate overall confidence
-        if fingerprint.confidence:
-            fingerprint.confidence['overall'] = sum(fingerprint.confidence.values()) / len(fingerprint.confidence)
-        else:
-            fingerprint.confidence['overall'] = 0.5
-    
-    def _detect_waf(self, fingerprint: TargetFingerprint):
-        """Detect Web Application Firewall"""
-        waf_signatures = {
-            'cloudflare': ['CF-RAY', '__cfduid', 'cloudflare'],
-            'akamai': ['AkamaiGHost', 'akamai'],
-            'aws_waf': ['AWSALB', 'AWSALBCORS', 'x-amzn-RequestId'],
-            'incapsula': ['incap_ses', 'visid_incap'],
-            'sucuri': ['x-sucuri-id', 'sucuri'],
-            'barracuda': ['barra'],
-            'f5_bigip': ['x-wa-info', 'BigIP', 'F5'],
-            'modsecurity': ['mod_security', 'Mod_Security'],
-            'nginx_modsecurity': ['nginx.*modsecurity']
+        # Create enriched context with fingerprint
+        context = {
+            'config': self.config.to_dict(),
+            'target_info': {
+                'product': fingerprint.product,
+                'version': fingerprint.version,
+                'technologies': fingerprint.technologies,
+                'frameworks': fingerprint.frameworks,
+                'cms': fingerprint.cms,
+                'server': fingerprint.server,
+                'waf': fingerprint.waf,
+                'raw_signals': fingerprint.raw_signals
+            }
         }
         
-        # Check headers
-        headers_str = ' '.join(fingerprint.headers.keys()).lower()
-        headers_values = ' '.join(fingerprint.headers.values()).lower()
+        # Pass fingerprint to mapper if available
+        if hasattr(self, 'mapper'):
+            self.mapper.integrate_with_orchestrator(self)
+            enhanced_recon = self.mapper.perform_enhanced_recon(target)
+            context['mapper_recon'] = enhanced_recon
         
-        # Check cookies
-        cookies_str = ' '.join([c['name'] for c in fingerprint.cookies]).lower()
+        # Use AI orchestrator for intelligent exploitation with fingerprint context
+        if self.config.llm.provider != 'none':
+            ai_result = await self.ai_orchestrator.orchestrate_exploitation(
+                target=target,
+                vulnerability_type='AUTO',
+                context=context
+            )
+            
+            # Validate results
+            validation = await self.validation_framework.validate_exploitation(
+                target=target,
+                vulnerability_type=ai_result.get('vulnerability_type', 'UNKNOWN'),
+                exploitation_result=ai_result
+            )
+            
+            # Record for learning
+            if self.config.learning.enable_continuous_learning:
+                attempt = ExploitAttempt(
+                    timestamp=datetime.now(),
+                    target=target,
+                    vulnerability_type=ai_result.get('vulnerability_type', 'UNKNOWN'),
+                    plugin_used='AI_Orchestrator',
+                    success=validation.validated,
+                    confidence_score=validation.confidence_score,
+                    evidence_score=validation.confidence_score,
+                    execution_time=time.time() - start_time,
+                    error_details=None,
+                    environmental_factors={'fingerprint': fingerprint.product},
+                    payload_characteristics={}
+                )
+                self.learning_pipeline.record_exploitation_attempt(attempt)
         
-        combined = f"{headers_str} {headers_values} {cookies_str}"
+        # Run autonomous exploitation if enabled with fingerprint context
+        if self.config.autonomy.enable_autonomy:
+            # Pass fingerprint to autonomous engine
+            self.autonomous_engine.context = context
+            
+            autonomous_result = await self.autonomous_engine.run_autonomous_exploitation(
+                target=target,
+                objectives=['Find all vulnerabilities', 'Demonstrate impact'],
+                constraints={'max_time': self.config.exploitation.exploitation_timeout}
+            )
+            
+            # Generate business impact report
+            if autonomous_result.get('findings'):
+                report = self.impact_reporter.generate_executive_report(
+                    findings=autonomous_result['findings'],
+                    scan_metadata={
+                        'target': target,
+                        'duration': time.time() - start_time,
+                        'fingerprint': {
+                            'product': fingerprint.product,
+                            'version': fingerprint.version,
+                            'technologies': fingerprint.technologies
+                        }
+                    }
+                )
+                
+                # Save report
+                report_path = Path(self.config.reporting.output_dir) / f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                with open(report_path, 'w') as f:
+                    json.dump(report, f, indent=2, default=str)
+                
+                print(f"[+] Report saved to {report_path}")
         
-        for waf_name, signatures in waf_signatures.items():
-            for sig in signatures:
-                if sig.lower() in combined:
-                    fingerprint.waf = waf_name
-                    fingerprint.confidence[f'waf_{waf_name}'] = 0.85
-                    break
+        # Update metrics
+        self.metrics.total_attempts += 1
+        self.metrics.total_time += time.time() - start_time
+        
+        return {
+            'target': target,
+            'duration': time.time() - start_time,
+            'fingerprint': {
+                'product': fingerprint.product,
+                'version': fingerprint.version,
+                'confidence': fingerprint.confidence.get('overall', 0)
+            },
+            'metrics': self.metrics,
+            'config_used': self.config.version
+        }
     
-    def _detect_cloud_provider(self, fingerprint: TargetFingerprint):
-        """Detect cloud provider from various signals"""
-        # Already detected from SSL?
-        if fingerprint.cloud_provider:
-            return
+    def select_payloads_for_target(self, 
+                                  target: str,
+                                  vulnerability_type: str,
+                                  context: Optional[Dict] = None) -> List[Dict]:
+        """
+        Select optimal payloads for a target based on fingerprint
         
-        # Check headers
-        headers = fingerprint.headers
+        Args:
+            target: Target URL
+            vulnerability_type: Type of vulnerability to test
+            context: Additional context for selection
+            
+        Returns:
+            List of selected payloads with ranking
+        """
+        # Get fingerprint
+        fingerprint = self.fingerprint_target(target)
         
-        # AWS
-        if any(h.startswith('x-amz-') for h in headers):
-            fingerprint.cloud_provider = 'aws'
-        # Azure
-        elif any('azure' in h.lower() for h in headers):
-            fingerprint.cloud_provider = 'azure'
-        # GCP
-        elif any('google' in h.lower() for h in headers.values()):
-            fingerprint.cloud_provider = 'gcp'
-        # DigitalOcean
-        elif 'do-loadbalancer' in headers.get('server', '').lower():
-            fingerprint.cloud_provider = 'digitalocean'
+        # Use smart selector
+        payloads = self.payload_selector.select_for_target(
+            target=target,
+            vulnerability=vulnerability_type,
+            aggressive=self.config.exploitation.aggressive_mode,
+            context=context
+        )
+        
+        return payloads
     
-    def _external_fingerprint(self, fingerprint: TargetFingerprint, target: str):
-        """Use external tools if available (placeholder for integration)"""
-        # This would integrate with tools like:
-        # - WhatWeb
-        # - Wappalyzer CLI
-        # - Nmap service detection
-        # For now, just add a flag
-        fingerprint.raw_signals['external_tools_used'] = False
+    def get_status(self) -> Dict:
+        """Get current status with all module information"""
+        return {
+            'config_version': self.config.version,
+            'target': self.config.bounty.target_domain,
+            'scope': self.config.safety.scope_hosts,
+            'metrics': self.metrics,
+            'fingerprints_cached': len(self.fingerprint_cache),
+            'learning_insights': self.learning_pipeline.get_learning_insights(),
+            'modules_loaded': {
+                'learning': True,
+                'impact_reporting': True,
+                'benchmarking': self.benchmark_framework is not None,
+                'ai_orchestration': True,
+                'autonomous': self.config.autonomy.enable_autonomy,
+                'validation': True,
+                'fingerprinting': True,  # NEW
+                'payload_management': True  # NEW
+            }
+        }
     
-    def get_summary(self, fingerprint: TargetFingerprint) -> str:
-        """Get human-readable summary of fingerprint"""
-        lines = []
-        lines.append(f"Target: {fingerprint.url}")
-        lines.append(f"Timestamp: {fingerprint.timestamp}")
-        
-        if fingerprint.product:
-            version = f" {fingerprint.version}" if fingerprint.version else ""
-            lines.append(f"Primary Product: {fingerprint.product}{version}")
-        
-        if fingerprint.server:
-            lines.append(f"Server: {fingerprint.server}")
-        
-        if fingerprint.cms:
-            lines.append(f"CMS: {fingerprint.cms}")
-        
-        if fingerprint.frameworks:
-            lines.append(f"Frameworks: {', '.join(fingerprint.frameworks)}")
-        
-        if fingerprint.technologies:
-            lines.append(f"Technologies: {', '.join(fingerprint.technologies)}")
-        
-        if fingerprint.waf:
-            lines.append(f"WAF: {fingerprint.waf}")
-        
-        if fingerprint.cdn:
-            lines.append(f"CDN: {fingerprint.cdn}")
-        
-        if fingerprint.cloud_provider:
-            lines.append(f"Cloud Provider: {fingerprint.cloud_provider}")
-        
-        lines.append(f"Overall Confidence: {fingerprint.confidence.get('overall', 0):.2%}")
-        
-        return "\n".join(lines)
+    def export_fingerprint_cache(self) -> Dict:
+        """Export all collected fingerprints"""
+        return {
+            target: {
+                'product': fp.product,
+                'version': fp.version,
+                'technologies': fp.technologies,
+                'frameworks': fp.frameworks,
+                'cms': fp.cms,
+                'server': fp.server,
+                'waf': fp.waf,
+                'timestamp': fp.timestamp
+            }
+            for target, fp in self.fingerprint_cache.items()
+        }
 
+    # ---------------------------
+    # NEW: execute() entry point
+    # ---------------------------
+    def execute(self, target: str, llm_step_budget: int) -> Dict[str, Any]:
+        """
+        Synchronous orchestrator entrypoint used by run_standard_mode.
+        Coordinates scope check, fingerprinting, exploitation, and reporting.
 
-# Utility functions for external use
-def quick_fingerprint(target: str) -> Dict[str, Any]:
-    """Quick fingerprint for simple integration"""
-    fp = Fingerprinter()
-    result = fp.fingerprint(target, aggressive=False)
-    
-    return {
-        'product': result.product,
-        'version': result.version,
-        'technologies': result.technologies,
-        'frameworks': result.frameworks,
-        'cms': result.cms,
-        'server': result.server,
-        'waf': result.waf,
-        'confidence': result.confidence.get('overall', 0)
-    }
+        Returns a dict that MUST contain:
+          - 'evidence_summary': Dict[str, Any]
+          - 'metrics': Dict[str, Any]
+          - 'report': str
+        """
+        start = time.time()
 
+        # Scope check
+        if not self.check_scope(target):
+            evidence = {
+                'scope': {
+                    'in_scope': False,
+                    'reason': 'Target not permitted by safety configuration'
+                }
+            }
+            metrics_dict = asdict(self.metrics)
+            metrics_dict.update({
+                'llm_step_budget': llm_step_budget,
+                'start_time': start,
+                'end_time': time.time(),
+                'duration': time.time() - start
+            })
+            report = (
+                "## CyberShell Report\n"
+                f"- Target: {target}\n"
+                "- Result: Out of scope. No actions taken.\n"
+            )
+            return {
+                'evidence_summary': evidence,
+                'metrics': metrics_dict,
+                'report': report
+            }
 
-def detailed_fingerprint(target: str) -> TargetFingerprint:
-    """Detailed fingerprint with aggressive scanning"""
-    fp = Fingerprinter({'aggressive': True, 'use_external_tools': False})
-    return fp.fingerprint(target, aggressive=True)
+        # Fingerprint first (cached when appropriate)
+        fp = self.fingerprint_target(target)
+        evidence: Dict[str, Any] = {
+            'fingerprint': {
+                'product': fp.product,
+                'version': fp.version,
+                'technologies': fp.technologies,
+                'frameworks': fp.frameworks,
+                'cms': fp.cms,
+                'server': fp.server,
+                'waf': fp.waf,
+                'confidence': fp.confidence,
+                'timestamp': fp.timestamp
+            }
+        }
+
+        # Run exploitation (async -> sync bridge)
+        exploitation_result: Dict[str, Any] = {}
+        try:
+            exploitation_result = asyncio.run(self.run_exploitation(target))
+        except RuntimeError:
+            # Fallback if event loop policy forbids asyncio.run in this context
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # Cannot block on a running loop; skip async exploitation gracefully
+                    exploitation_result = {'error': 'event_loop_running'}
+                else:
+                    exploitation_result = loop.run_until_complete(self.run_exploitation(target))
+            except Exception as e:
+                exploitation_result = {'error': str(e)}
+        except Exception as e:
+            exploitation_result = {'error': str(e)}
+
+        # Fold relevant exploitation evidence
+        if exploitation_result:
+            evidence['exploitation'] = {
+                k: v for k, v in exploitation_result.items()
+                if k not in ('metrics', 'config_used')
+            }
+
+        # Include any aggregated evidence if available
+        if hasattr(self, 'evidence_aggregator'):
+            try:
+                # Some implementations expose summarize()/to_dict(); be defensive
+                if hasattr(self.evidence_aggregator, 'summarize'):
+                    evidence['aggregated'] = self.evidence_aggregator.summarize()
+                elif hasattr(self.evidence_aggregator, 'to_dict'):
+                    evidence['aggregated'] = self.evidence_aggregator.to_dict()
+            except Exception:
+                pass
+
+        # Build a concise textual report (do not depend on ReportBuilder internals)
+        lines = [
+            "## CyberShell Report",
+            f"- Target: {target}",
+            f"- Generated: {datetime.utcnow().isoformat()}Z",
+            "",
+            "### Fingerprint",
+            f"- Product: {fp.product or 'unknown'}",
+            f"- Version: {fp.version or 'unknown'}",
+            f"- Technologies: {', '.join(fp.technologies) if fp.technologies else 'none detected'}",
+            f"- Server: {fp.server or 'unknown'}",
+            f"- WAF: {fp.waf or 'none detected'}",
+            "",
+            "### Exploitation Summary",
+        ]
+
+        if exploitation_result.get('error') == 'out_of_scope':
+            lines.append("- Target out of scope. No exploitation performed.")
+        elif 'error' in exploitation_result:
+            lines.append(f"- Exploitation error: {exploitation_result['error']}")
+        else:
+            dur = exploitation_result.get('duration', 0.0)
+            lines.append(f"- Duration: {round(dur, 2)}s")
+            vulns = self.metrics.vulnerabilities_found
+            if vulns:
+                lines.append(f"- Vulnerabilities found: {', '.join(vulns)}")
+            else:
+                lines.append("- No confirmed vulnerabilities recorded.")
+
+        report_text = "\n".join(lines)
+
+        # Emit metrics as a plain dict
+        metrics_dict = asdict(self.metrics)
+        metrics_dict.update({
+            'llm_step_budget': llm_step_budget,
+            'start_time': start,
+            'end_time': time.time(),
+            'duration': time.time() - start
+        })
+
+        return {
+            'evidence_summary': evidence,
+            'metrics': metrics_dict,
+            'report': report_text
+        }
+
