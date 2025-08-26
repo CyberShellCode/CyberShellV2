@@ -5,13 +5,17 @@ import json
 from pathlib import Path
 from datetime import datetime
 
-# Fix for direct execution
 if __name__ == "__main__" and __package__ is None:
-    # Add parent directory to path for direct execution
-    sys.path.insert(0, str(Path(__file__).parent.parent))
-    from cybershell.orchestrator import CyberShell
-    from cybershell.config import SafetyConfig
-    from cybershell.agent import BountyConfig, AutonomousBountyHunter
+    # Ensure package imports work when executed directly
+    try:
+        from cybershell.orchestrator import CyberShell
+        from cybershell.config import SafetyConfig
+        from cybershell.agent import BountyConfig
+    except ModuleNotFoundError:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from cybershell.orchestrator import CyberShell
+        from cybershell.config import SafetyConfig
+        from cybershell.agent import BountyConfig
     from cybershell.llm_connectors import (
         OllamaConnector,
         OpenAIChatConnector,
@@ -21,12 +25,11 @@ if __name__ == "__main__" and __package__ is None:
 else:
     from .orchestrator import CyberShell
     from .config import SafetyConfig
-    from .agent import BountyConfig, AutonomousBountyHunter
+    from .agent import BountyConfig
     from .llm_connectors import (
         OllamaConnector,
         OpenAIChatConnector,
         LocalFunctionConnector,
-        OpenAICompatibleHTTPConnector
     )
 
 def print_banner():
@@ -54,7 +57,7 @@ def print_banner():
     """
     print(banner)
 
-def setup_llm(args: argparse.Namespace, bot: CyberShell) -> Optional[LLMConnector]:
+def setup_llm(args, bot: CyberShell):
     """Configure LLM based on arguments"""
     
     if args.llm == "none":
@@ -101,63 +104,67 @@ def setup_llm(args: argparse.Namespace, bot: CyberShell) -> Optional[LLMConnecto
         print(f"[!] Failed to configure LLM: {e}")
         return None
 
-def run_ctf_mode(args):
-    """Run CTF solving mode with targeted vulnerability testing"""
-    
-    print(f"\n[CTF MODE] Target: {args.target}")
-    
-    # Configure for CTF (always aggressive)
-    config = SafetyConfig(
-        allow_localhost=True,
-        allow_private_ranges=True,
-        additional_scope_hosts=[],
-        require_manual_approval=False
-    )
-    
-    # Initialize CyberShell with CTF settings
-    bot = CyberShell(
-        config=config,
-        doc_root=args.doc_root,
-        planner_name='aggressive',  # Always aggressive for CTF
-        scorer_name='weighted_signal',
-        user_plugins_dir=args.plugins_dir
-    )
-    
-    # Setup LLM
-    setup_llm(args, bot)
-    
-    # Check if specific vulnerability was specified
-    if args.vuln_type:
-        print(f"[*] Targeting specific vulnerability: {args.vuln_type.upper()}")
-        result = run_targeted_ctf_test(bot, args.target, args.vuln_type)
-    else:
-        print("[*] Running full CTF exploitation scan")
-        # Configure for CTF hunting
-        ctf_config = BountyConfig(
-            target_domain=args.target,
-            scope=[args.target],
-            aggressive_mode=True,
-            chain_vulnerabilities=True,
-            extract_data_samples=True,
-            auto_generate_reports=True,
-            max_parallel_exploits=10,
-            min_cvss_for_exploit=0.0,  # Exploit everything in CTF
-            confidence_threshold=0.2    # Low threshold for CTF
-        )
-        
-        # Run autonomous hunt
-        result = bot.hunt_autonomous(args.target, ctf_config)
-    
-    # Extract and display flag
-    extract_ctf_flag(result)
-    
-    # Save CTF report
-    if args.output:
-        save_ctf_report(result, args.output)
-    else:
-        save_ctf_report(result, f"ctf_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
-    
-    return result
+def run_ctf_mode(args: argparse.Namespace) -> dict:
+     """Run CTF solving mode with targeted vulnerability testing"""
+     
+     print(f"\n[CTF MODE] Target: {args.target}")
+     
+     # Configure for CTF (always aggressive)
+     config = SafetyConfig(
+         allow_localhost=True,
+         allow_private_ranges=True,
+         additional_scope_hosts=[],
+         require_manual_approval=False
+     )
+     
+     # Initialize CyberShell with CTF settings
+     bot = CyberShell(
+         config=config,
+         doc_root=args.doc_root,
+         planner_name='aggressive',  # Always aggressive for CTF
+         scorer_name='weighted_signal',
+         user_plugins_dir=args.plugins_dir
+     )
+     
+     # Setup LLM
+     setup_llm(args, bot)
+     
+     # Check if specific vulnerability was specified
+     if args.vuln_type:
+         print(f"[*] Targeting specific vulnerability: {args.vuln_type.upper()}")
+         result = run_targeted_ctf_test(bot, args.target, args.vuln_type)
+     else:
+         print("[*] Running full CTF exploitation scan")
+         # Configure for CTF hunting
+         ctf_config = BountyConfig(
+             target_domain=args.target,
+             scope=[args.target],
+             aggressive_mode=True,
+             chain_vulnerabilities=True,
+             extract_data_samples=True,
+             auto_generate_reports=True,
+             max_parallel_exploits=10,
+             min_cvss_for_exploit=0.0,  # Exploit everything in CTF
+             confidence_threshold=0.2    # Low threshold for CTF
+         )
+         
+         # Run autonomous hunt
+         result = bot.hunt_autonomous(args.target, ctf_config)
+     
+     # Extract and display flag
+     extract_ctf_flag(result)
+     
+     # Save CTF report
+     if args.output:
+         save_ctf_report(result, args.output)
+     else:
+         # Use timezone-aware timestamp in filename
+         save_ctf_report(
+             result,
+             f"ctf_report_{datetime.now().astimezone().strftime('%Y%m%d_%H%M%S%z')}.json"
+         )
+     
+     return result
 
 def run_targeted_ctf_test(bot: CyberShell, target: str, vuln_type: str):
     """Run targeted vulnerability test for CTF"""
@@ -379,13 +386,13 @@ def run_standard_mode(args):
             output_path.write_text(result.get('report', ''))
             print(f"\n[+] Report saved to {output_path}")
         else:  # json
-            with open(output_path, 'w') as f:
+            with open(output_path, 'w', encoding='utf-8') as f:
                 json.dump(result, f, indent=2, default=str)
             print(f"\n[+] JSON results saved to {output_path}")
     else:
         print("\n" + result.get('report', ''))
 
-def run_autonomous_mode(args):
+def run_autonomous_mode(args: argparse.Namespace) -> None:
     """Run fully autonomous bug bounty hunting mode"""
     
     print("[*] Initializing Autonomous Bug Bounty Hunter")
@@ -457,7 +464,7 @@ def run_autonomous_mode(args):
             json.dump(result, f, indent=2, default=str)
         print(f"\n[+] Results saved to {output_path}")
 
-def main():
+def main() -> None:
     """Main entry point"""
 
     print_banner()
@@ -542,7 +549,7 @@ def main():
             args.target = sys.argv[1]
             # Re-parse with defaults
             remaining_args = sys.argv[2:] if len(sys.argv) > 2 else []
-            args = exploit_parser.parse_args([sys.argv[1]] + remaining_args)
+            args = exploit_parser.parse_args([sys.argv[1], *remaining_args])
             args.mode = 'exploit'
         else:
             print("\nUsage examples:")
@@ -589,7 +596,10 @@ def main():
     except KeyboardInterrupt:
         print("\n[!] Interrupted by user")
         sys.exit(130)
-    except Exception as e:
+    except KeyboardInterrupt:
+        print("\n[!] Interrupted by user")
+        sys.exit(130)
+    except (RuntimeError, ValueError, AttributeError, ImportError) as e:
         print(f"\n[!] Error: {e}")
         if hasattr(args, 'verbose') and args.verbose:
             import traceback
