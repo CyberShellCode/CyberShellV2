@@ -54,7 +54,7 @@ def print_banner():
     """
     print(banner)
 
-def setup_llm(args, bot: CyberShell):
+def setup_llm(args: argparse.Namespace, bot: CyberShell) -> Optional[LLMConnector]:
     """Configure LLM based on arguments"""
     
     if args.llm == "none":
