@@ -5,27 +5,27 @@ import json
 from pathlib import Path
 from datetime import datetime
 
+# Fix imports - use unified_config for SafetyConfig and BountyConfig
 if __name__ == "__main__" and __package__ is None:
     # Ensure package imports work when executed directly
     try:
         from cybershell.orchestrator import CyberShell
-        from cybershell.config import SafetyConfig
-        from cybershell.agent import BountyConfig
+        from cybershell.unified_config import SafetyConfig, BountyConfig
+        from cybershell.agent import AutonomousBountyHunter
     except ModuleNotFoundError:
         sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
         from cybershell.orchestrator import CyberShell
-        from cybershell.config import SafetyConfig
-        from cybershell.agent import BountyConfig
+        from cybershell.unified_config import SafetyConfig, BountyConfig
+        from cybershell.agent import AutonomousBountyHunter
     from cybershell.llm_connectors import (
         OllamaConnector,
         OpenAIChatConnector,
         LocalFunctionConnector,
-        OpenAICompatibleHTTPConnector
     )
 else:
     from .orchestrator import CyberShell
-    from .config import SafetyConfig
-    from .agent import BountyConfig
+    from .unified_config import SafetyConfig, BountyConfig
+    from .agent import AutonomousBountyHunter
     from .llm_connectors import (
         OllamaConnector,
         OpenAIChatConnector,
@@ -35,25 +35,25 @@ else:
 def print_banner():
     """Print CyberShell banner"""
     banner = """
-╔═══════════════════════════════════════════════════════════════╗
-║                                                               ║
-║   ██████╗██╗   ██╗██████╗ ███████╗██████╗                     ║
-║  ██╔════╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗                    ║
-║  ██║      ╚████╔╝ ██████╔╝█████╗  ██████╔╝                    ║
-║  ██║       ╚██╔╝  ██╔══██╗██╔══╝  ██╔══██╗                    ║
-║  ╚██████╗   ██║   ██████╔╝███████╗██║  ██║                    ║
-║   ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝                    ║
-║                                                               ║
-║         ███████╗██╗  ██╗███████╗██╗     ██╗                   ║
-║         ██╔════╝██║  ██║██╔════╝██║     ██║                   ║
-║         ███████╗███████║█████╗  ██║     ██║                   ║
-║         ╚════██║██╔══██║██╔══╝  ██║     ██║                   ║
-║         ███████║██║  ██║███████╗███████╗███████╗              ║
-║         ╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝              ║
-║                                                               ║
-║    Autonomous Bug Bounty & CTF Hunting Framework v2.0         ║
-║           For Authorized Security Testing Only                ║
-╚═══════════════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════╗
+║                                                          ║
+║   ██████╗██╗   ██╗██████╗ ███████╗██████╗                ║
+║  ██╔════╝╚██╗ ██╔╝██╔══██╗██╔════╝██╔══██╗               ║
+║  ██║      ╚████╔╝ ██████╔╝█████╗  ██████╔╝               ║
+║  ██║       ╚██╔╝  ██╔══██╗██╔══╝  ██╔══██╗               ║
+║  ╚██████╗   ██║   ██████╔╝███████╗██║  ██║               ║
+║   ╚═════╝   ╚═╝   ╚═════╝ ╚══════╝╚═╝  ╚═╝               ║
+║                                                          ║
+║         ███████╗██╗  ██╗███████╗██╗     ██╗              ║
+║         ██╔════╝██║  ██║██╔════╝██║     ██║              ║
+║         ███████╗███████║█████╗  ██║     ██║              ║
+║         ╚════██║██╔══██║██╔══╝  ██║     ██║              ║
+║         ███████║██║  ██║███████╗███████╗███████╗         ║
+║         ╚══════╝╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝         ║
+║                                                          ║
+║    Autonomous Bug Bounty & CTF Hunting Framework v2.0    ║
+║           For Authorized Security Testing Only           ║
+╚══════════════════════════════════════════════════════════╝
     """
     print(banner)
 
@@ -80,15 +80,10 @@ def setup_llm(args, bot: CyberShell):
             print("[+] OpenAI configured")
             
         elif args.llm == "localfn":
-            # Example local function that generates aggressive steps
             def aggressive_llm(prompt: str) -> str:
                 return json.dumps([
                     {"plugin": "SQLiExploitPlugin", "why": "SQL injection attack", 
                      "params": {"technique": "union_based", "extract_data": True}},
-                    {"plugin": "XSSExploitPlugin", "why": "XSS session theft",
-                     "params": {"steal_session": True}},
-                    {"plugin": "RCEExploitPlugin", "why": "Remote code execution",
-                     "params": {"establish_shell": True}},
                 ])
             llm = LocalFunctionConnector(generate_fn=aggressive_llm)
             print("[+] Local function LLM configured")
@@ -97,7 +92,7 @@ def setup_llm(args, bot: CyberShell):
             print(f"[!] Unknown LLM type: {args.llm}")
             return None
         
-        bot.set_llm(llm)
+        bot.llm = llm
         return llm
         
     except Exception as e:
@@ -105,66 +100,61 @@ def setup_llm(args, bot: CyberShell):
         return None
 
 def run_ctf_mode(args: argparse.Namespace) -> dict:
-     """Run CTF solving mode with targeted vulnerability testing"""
-     
-     print(f"\n[CTF MODE] Target: {args.target}")
-     
-     # Configure for CTF (always aggressive)
-     config = SafetyConfig(
-         allow_localhost=True,
-         allow_private_ranges=True,
-         additional_scope_hosts=[],
-         require_manual_approval=False
-     )
-     
-     # Initialize CyberShell with CTF settings
-     bot = CyberShell(
-         config=config,
-         doc_root=args.doc_root,
-         planner_name='aggressive',  # Always aggressive for CTF
-         scorer_name='weighted_signal',
-         user_plugins_dir=args.plugins_dir
-     )
-     
-     # Setup LLM
-     setup_llm(args, bot)
-     
-     # Check if specific vulnerability was specified
-     if args.vuln_type:
-         print(f"[*] Targeting specific vulnerability: {args.vuln_type.upper()}")
-         result = run_targeted_ctf_test(bot, args.target, args.vuln_type)
-     else:
-         print("[*] Running full CTF exploitation scan")
-         # Configure for CTF hunting
-         ctf_config = BountyConfig(
-             target_domain=args.target,
-             scope=[args.target],
-             aggressive_mode=True,
-             chain_vulnerabilities=True,
-             extract_data_samples=True,
-             auto_generate_reports=True,
-             max_parallel_exploits=10,
-             min_cvss_for_exploit=0.0,  # Exploit everything in CTF
-             confidence_threshold=0.2    # Low threshold for CTF
-         )
-         
-         # Run autonomous hunt
-         result = bot.hunt_autonomous(args.target, ctf_config)
-     
-     # Extract and display flag
-     extract_ctf_flag(result)
-     
-     # Save CTF report
-     if args.output:
-         save_ctf_report(result, args.output)
-     else:
-         # Use timezone-aware timestamp in filename
-         save_ctf_report(
-             result,
-             f"ctf_report_{datetime.now().astimezone().strftime('%Y%m%d_%H%M%S%z')}.json"
-         )
-     
-     return result
+    """Run CTF solving mode with targeted vulnerability testing"""
+    
+    print(f"\n[CTF MODE] Target: {args.target}")
+    
+    # Configure for CTF (always aggressive)
+    config = SafetyConfig(
+        allow_localhost=True,
+        allow_private_ranges=True,
+        additional_scope_hosts=[],
+        require_explicit_authorization=False  # Fixed parameter name
+    )
+    
+    # Initialize CyberShell with args
+    bot = CyberShell(args=args)
+    bot.safety_config = config  # Override safety config for CTF
+    
+    # Setup LLM
+    setup_llm(args, bot)
+    
+    # Check if specific vulnerability was specified
+    if args.vuln_type:
+        print(f"[*] Targeting specific vulnerability: {args.vuln_type.upper()}")
+        result = run_targeted_ctf_test(bot, args.target, args.vuln_type)
+    else:
+        print("[*] Running full CTF exploitation scan")
+        # Configure for CTF hunting
+        ctf_config = BountyConfig(
+            target_domain=args.target,
+            scope=[args.target],
+            aggressive_mode=True,
+            chain_vulnerabilities=True,
+            extract_data_samples=True,
+            auto_generate_reports=True,
+            max_parallel_exploits=10,
+            min_cvss_for_exploit=0.0,
+            confidence_threshold=0.2
+        )
+        
+        # Use agent.hunt if available
+        if hasattr(bot, 'agent') and hasattr(bot.agent, 'hunt'):
+            result = bot.agent.hunt(args.target)
+        else:
+            # Fallback to execute
+            result = bot.execute(args.target, llm_step_budget=5)
+    
+    # Extract and display flag
+    extract_ctf_flag(result)
+    
+    # Save CTF report
+    if args.output:
+        save_ctf_report(result, args.output)
+    else:
+        save_ctf_report(result, f"ctf_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+    
+    return result
 
 def run_targeted_ctf_test(bot: CyberShell, target: str, vuln_type: str):
     """Run targeted vulnerability test for CTF"""
@@ -172,7 +162,7 @@ def run_targeted_ctf_test(bot: CyberShell, target: str, vuln_type: str):
     vuln_type = vuln_type.upper()
     results = []
     
-    # Map vulnerability types to plugins
+    # Map vulnerability types to plugins - only use existing ones
     vuln_plugin_map = {
         'SQLI': ['SQLiTestPlugin', 'SQLiExploitPlugin'],
         'SQL': ['SQLiTestPlugin', 'SQLiExploitPlugin'],
@@ -180,21 +170,13 @@ def run_targeted_ctf_test(bot: CyberShell, target: str, vuln_type: str):
         'RCE': ['RCETestPlugin', 'RCEExploitPlugin'],
         'IDOR': ['IDORTestPlugin', 'IDORExploitPlugin'],
         'SSRF': ['SSRFTestPlugin', 'SSRFExploitPlugin'],
-        'XXE': ['XXETestPlugin', 'XXEExploitPlugin'],
-        'SSTI': ['SSTITestPlugin', 'SSTIExploitPlugin'],
-        'LFI': ['PathTraversalTestPlugin', 'LFIExploitPlugin'],
-        'AUTH': ['AuthBypassTestPlugin', 'AuthBypassExploitPlugin'],
-        'JWT': ['JWTTestPlugin', 'JWTExploitPlugin'],
-        'UPLOAD': ['FileUploadTestPlugin', 'FileUploadExploitPlugin'],
-        'DESERIAL': ['DeserializationTestPlugin', 'DeserializationExploitPlugin'],
-        'RACE': ['RaceConditionTestPlugin', 'RaceConditionExploitPlugin'],
-        'LOGIC': ['BusinessLogicTestPlugin', 'BusinessLogicExploitPlugin']
     }
     
     if vuln_type not in vuln_plugin_map:
         print(f"[!] Unknown vulnerability type: {vuln_type}")
         print(f"[*] Available types: {', '.join(vuln_plugin_map.keys())}")
-        return None
+        # Fallback to execute
+        return bot.execute(target, llm_step_budget=5)
     
     plugins = vuln_plugin_map[vuln_type]
     
@@ -204,7 +186,11 @@ def run_targeted_ctf_test(bot: CyberShell, target: str, vuln_type: str):
     for plugin_name in plugins:
         print(f"[*] Executing: {plugin_name}")
         
-        # Build params based on plugin type
+        # Check if plugin exists
+        if plugin_name not in bot.plugins:
+            print(f"  [!] Plugin {plugin_name} not found, skipping...")
+            continue
+        
         params = {'target': target}
         
         # Add specific params for exploitation plugins
@@ -215,53 +201,25 @@ def run_targeted_ctf_test(bot: CyberShell, target: str, vuln_type: str):
                     'extract_data': True,
                     'enumerate_db': True
                 })
-            elif 'XSS' in plugin_name:
-                params.update({
-                    'steal_session': True,
-                    'screenshot': True
-                })
-            elif 'RCE' in plugin_name:
-                params.update({
-                    'establish_shell': True,
-                    'system_enumeration': True
-                })
-            elif 'SSRF' in plugin_name:
-                params.update({
-                    'access_metadata': True,
-                    'scan_internal': True
-                })
         
-        result = bot.execute_plugin(plugin_name, params)
-        results.append(result)
-        
-        if result.success:
-            print(f"  [+] SUCCESS: {plugin_name}")
+        try:
+            result = bot.execute_plugin(plugin_name, params)
+            results.append(result)
             
-            # Check for flag in result
-            details = result.details
-            if 'flag' in str(details).lower() or 'ctf{' in str(details).lower():
-                print(f"  [🚩] Potential flag found!")
-            
-            # Show evidence score
-            if 'evidence_score' in details:
-                print(f"  [*] Evidence Score: {details['evidence_score']:.2f}")
-        else:
-            print(f"  [-] Failed: {plugin_name}")
-            # If test failed, skip exploitation
-            if 'Test' in plugin_name:
-                print(f"  [!] Skipping exploitation since test failed")
-                break
+            if result.success:
+                print(f"  [+] SUCCESS: {plugin_name}")
+            else:
+                print(f"  [-] Failed: {plugin_name}")
+        except Exception as e:
+            print(f"  [!] Error executing {plugin_name}: {e}")
     
     print("-" * 50)
     
-    # Build comprehensive result
     return {
         'target': target,
         'vulnerability_type': vuln_type,
-        'plugins_executed': [r.name for r in results],
-        'results': [r.__dict__ for r in results],
-        'success': any(r.success for r in results),
-        'findings': [r.details for r in results if r.success]
+        'results': [r.__dict__ if hasattr(r, '__dict__') else r for r in results],
+        'success': any(r.success if hasattr(r, 'success') else False for r in results)
     }
 
 def extract_ctf_flag(result: dict):
@@ -272,22 +230,15 @@ def extract_ctf_flag(result: dict):
     print("FLAG EXTRACTION")
     print("="*60)
     
-    # Common CTF flag patterns
     flag_patterns = [
         r'flag\{[^}]+\}',
         r'FLAG\{[^}]+\}',
         r'ctf\{[^}]+\}',
         r'CTF\{[^}]+\}',
         r'picoCTF\{[^}]+\}',
-        r'htb\{[^}]+\}',
-        r'thm\{[^}]+\}',
-        r'[a-f0-9]{32}',  # MD5 hash as flag
-        r'[A-F0-9]{32}',  # MD5 uppercase
     ]
     
     flags_found = set()
-    
-    # Convert result to string and search
     result_str = json.dumps(result, default=str)
     
     for pattern in flag_patterns:
@@ -300,36 +251,18 @@ def extract_ctf_flag(result: dict):
             print(f"  🚩 {flag}")
     else:
         print("\n❌ No flags found in exploitation results")
-        print("💡 Tips:")
-        print("  - Check the detailed report for command outputs")
-        print("  - Try different vulnerability types")
-        print("  - Look for base64 encoded flags")
-        
-        # Check for base64 patterns
-        b64_pattern = r'[A-Za-z0-9+/]{20,}={0,2}'
-        b64_matches = re.findall(b64_pattern, result_str)
-        if b64_matches:
-            print("\n[*] Found potential base64 strings:")
-            for b64 in b64_matches[:5]:  # Show first 5
-                try:
-                    import base64
-                    decoded = base64.b64decode(b64).decode('utf-8')
-                    if 'flag' in decoded.lower() or 'ctf' in decoded.lower():
-                        print(f"  📦 {b64[:20]}... -> {decoded}")
-                except:
-                    pass
 
 def save_ctf_report(result: dict, filename: str):
     """Save CTF exploitation report"""
     output_path = Path(filename)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     
-    with open(output_path, 'w') as f:
+    with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(result, f, indent=2, default=str)
     
     print(f"\n[+] CTF report saved to {output_path}")
 
-def run_standard_mode(args):
+def run_standard_mode(args: argparse.Namespace) -> None:
     """Run standard bug bounty hunting mode"""
     
     # Configure safety settings
@@ -337,17 +270,12 @@ def run_standard_mode(args):
         allow_private_ranges=not args.production,
         allow_localhost=not args.production,
         additional_scope_hosts=args.scope.split(',') if args.scope else [],
-        require_manual_approval=args.safe_mode
+        require_explicit_authorization=args.safe_mode
     )
     
-    # Initialize CyberShell
-    bot = CyberShell(
-        config=config,
-        doc_root=args.doc_root,
-        planner_name=args.planner,
-        scorer_name=args.scorer,
-        user_plugins_dir=args.plugins_dir
-    )
+    # Initialize CyberShell with args
+    bot = CyberShell(args=args)
+    bot.safety_config = config
     
     # Setup LLM
     setup_llm(args, bot)
@@ -375,7 +303,6 @@ def run_standard_mode(args):
     print(f"\n[*] Total Attempts: {metrics.get('total_attempts', 0)}")
     print(f"[*] Successful Exploits: {metrics.get('successful_exploits', 0)}")
     print(f"[*] Success Rate: {metrics.get('success_rate', 0):.2%}")
-    print(f"[*] Exploit Chains: {metrics.get('exploit_chains', 0)}")
     
     # Save report
     if args.output:
@@ -383,9 +310,9 @@ def run_standard_mode(args):
         output_path.parent.mkdir(parents=True, exist_ok=True)
         
         if args.format == "markdown":
-            output_path.write_text(result.get('report', ''))
+            output_path.write_text(result.get('report', ''), encoding='utf-8')
             print(f"\n[+] Report saved to {output_path}")
-        else:  # json
+        else:
             with open(output_path, 'w', encoding='utf-8') as f:
                 json.dump(result, f, indent=2, default=str)
             print(f"\n[+] JSON results saved to {output_path}")
@@ -418,14 +345,9 @@ def run_autonomous_mode(args: argparse.Namespace) -> None:
         additional_scope_hosts=bounty_config.scope
     )
     
-    # Initialize orchestrator
-    bot = CyberShell(
-        config=config,
-        doc_root=args.doc_root,
-        planner_name=args.planner,
-        scorer_name=args.scorer,
-        user_plugins_dir=args.plugins_dir
-    )
+    # Initialize orchestrator with args
+    bot = CyberShell(args=args)
+    bot.safety_config = config
     
     # Setup LLM
     setup_llm(args, bot)
@@ -433,10 +355,15 @@ def run_autonomous_mode(args: argparse.Namespace) -> None:
     # Run autonomous hunt
     print(f"[*] Starting autonomous hunt on {args.target}")
     print(f"[*] Scope: {bounty_config.scope}")
-    print(f"[*] Aggressive mode: {bounty_config.aggressive_mode}")
-    print(f"[*] Parallel exploits: {bounty_config.max_parallel_exploits}")
     
-    result = bot.hunt_autonomous(args.target, bounty_config)
+    # Try different methods
+    if hasattr(bot, 'hunt_autonomous'):
+        result = bot.hunt_autonomous(args.target, bounty_config)
+    elif hasattr(bot, 'agent') and hasattr(bot.agent, 'hunt'):
+        result = bot.agent.hunt(args.target)
+    else:
+        print("[!] Using standard execution mode")
+        result = bot.execute(args.target, llm_step_budget=10)
     
     # Display findings
     print("\n" + "="*60)
@@ -444,23 +371,20 @@ def run_autonomous_mode(args: argparse.Namespace) -> None:
     print("="*60)
     
     findings = result.get('findings', [])
-    print(f"\n[*] Total Findings: {len(findings)}")
-    
-    for i, finding in enumerate(findings, 1):
-        print(f"\n[Finding #{i}]")
-        print(f"  Type: {finding.get('vuln_type')}")
-        print(f"  Severity: {finding.get('severity')}")
-        print(f"  Endpoint: {finding.get('endpoint')}")
-        print(f"  Impact: {finding.get('proof_of_impact', 'N/A')}")
-    
-    print(f"\n[*] Estimated Total Bounty: ${result.get('total_bounty_estimate', 0):,}")
+    if findings:
+        print(f"\n[*] Total Findings: {len(findings)}")
+        for i, finding in enumerate(findings, 1):
+            print(f"\n[Finding #{i}]")
+            print(f"  Type: {finding.get('vuln_type', 'Unknown')}")
+    else:
+        print("\n[*] No specific findings recorded")
     
     # Save results
     if args.output:
         output_path = Path(args.output)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         
-        with open(output_path, 'w') as f:
+        with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(result, f, indent=2, default=str)
         print(f"\n[+] Results saved to {output_path}")
 
@@ -481,9 +405,7 @@ def main() -> None:
     ctf_parser = subparsers.add_parser('ctf', help='CTF solving mode')
     ctf_parser.add_argument('target', help='CTF challenge URL')
     ctf_parser.add_argument('--vuln', '--vuln-type', dest='vuln_type',
-                            choices=['SQLI', 'SQL', 'XSS', 'RCE', 'IDOR', 'SSRF', 'XXE',
-                                     'SSTI', 'LFI', 'AUTH', 'JWT', 'UPLOAD', 'DESERIAL',
-                                     'RACE', 'LOGIC'],
+                            choices=['SQLI', 'SQL', 'XSS', 'RCE', 'IDOR', 'SSRF'],
                             help='Specific vulnerability to test for')
 
     # Standard exploitation mode
@@ -494,7 +416,7 @@ def main() -> None:
     hunt_parser = subparsers.add_parser('hunt', help='Autonomous bug bounty hunting')
     hunt_parser.add_argument('target', help='Target domain for bug bounty')
 
-    # Common arguments for all modes - MOVED UP AND EXPANDED
+    # Common arguments for all modes
     for p in [ctf_parser, exploit_parser, hunt_parser]:
         # Scope control arguments
         p.add_argument('--scope', help='Comma-separated in-scope domains')
@@ -516,7 +438,7 @@ def main() -> None:
                        help='Evidence scoring method')
 
         # LLM configuration
-        p.add_argument('--llm', default='ollama',
+        p.add_argument('--llm', default='none',
                        choices=['none', 'ollama', 'openai', 'localfn'],
                        help='LLM for exploitation assistance')
         p.add_argument('--llm-steps', type=int, default=5,
@@ -543,43 +465,8 @@ def main() -> None:
     args = parser.parse_args()
 
     if not args.mode:
-        # Default to exploit mode if target provided
-        if len(sys.argv) > 1 and not sys.argv[1].startswith('-'):
-            args.mode = 'exploit'
-            args.target = sys.argv[1]
-            # Re-parse with defaults
-            remaining_args = sys.argv[2:] if len(sys.argv) > 2 else []
-            args = exploit_parser.parse_args([sys.argv[1], *remaining_args])
-            args.mode = 'exploit'
-        else:
-            print("\nUsage examples:")
-            print("  CTF mode:     python __main__.py ctf http://ctf.local")
-            print("  CTF SQLi:     python __main__.py ctf http://ctf.local --vuln SQLI")
-            print("  Bug Bounty:   python __main__.py hunt http://target.com")
-            print("  Exploit:      python __main__.py exploit http://target.com")
-            print("\nOr run as module: python -m cybershell ctf http://ctf.local")
-            sys.exit(1)
-
-    # Ensure all required attributes exist with defaults
-    # This prevents AttributeError for missing arguments
-    if not hasattr(args, 'scope'):
-        args.scope = None
-    if not hasattr(args, 'out_of_scope'):
-        args.out_of_scope = None
-    if not hasattr(args, 'safe_mode'):
-        args.safe_mode = False
-    if not hasattr(args, 'chain_exploits'):
-        args.chain_exploits = False
-    if not hasattr(args, 'extract_data'):
-        args.extract_data = False
-    if not hasattr(args, 'production'):
-        args.production = False
-    if not hasattr(args, 'min_cvss'):
-        args.min_cvss = 4.0
-    if not hasattr(args, 'confidence'):
-        args.confidence = 0.75
-    if not hasattr(args, 'parallel'):
-        args.parallel = 5
+        parser.print_help()
+        sys.exit(1)
 
     # Execute based on mode
     try:
@@ -596,10 +483,7 @@ def main() -> None:
     except KeyboardInterrupt:
         print("\n[!] Interrupted by user")
         sys.exit(130)
-    except KeyboardInterrupt:
-        print("\n[!] Interrupted by user")
-        sys.exit(130)
-    except (RuntimeError, ValueError, AttributeError, ImportError) as e:
+    except Exception as e:
         print(f"\n[!] Error: {e}")
         if hasattr(args, 'verbose') and args.verbose:
             import traceback
