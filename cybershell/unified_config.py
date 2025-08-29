@@ -202,7 +202,13 @@ class ExploitationConfig:
     delay_between_attempts: float = 1.0
     prioritize_critical: bool = True
     skip_low_severity: bool = False
+    request_timeout: int = 30  # timeout for individual requests
+    session_timeout: int = 3600  # session timeout in seconds
     
+    # Integration with new modules
+    use_kb_payloads: bool = True
+    use_bypass_techniques: bool = True
+    smart_payload_selection: bool = True
     # Integration with new modules
     use_kb_payloads: bool = True  # Use vulnerability KB payloads
     use_bypass_techniques: bool = True  # Use bypass techniques on 403/401
@@ -401,6 +407,7 @@ class UnifiedConfig:
     network: NetworkConfig = field(default_factory=NetworkConfig)
     debug: DebugConfig = field(default_factory=DebugConfig)
     integration: IntegrationConfig = field(default_factory=IntegrationConfig)
+    knowledge_base_path: str = "knowledge_base/"
     
     # Metadata
     version: str = "2.0.0"
