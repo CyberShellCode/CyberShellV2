@@ -15,31 +15,25 @@ __license__ = "MIT"
 # Core modules
 from . import orchestrator
 from . import agent
-from . import plugins
-from . import scoring
-from . import strategies
 from . import unified_config
-from . import llm_connectors
-from . import reporting
-from . import plugin_loader
-
-# Security and bypass modules
-from . import vulnerability_kb
-from . import bypass_techniques
 from . import rate_limiter
+from . import fingerprinter  # Keep - actively used
 
-# Enhancement modules (AI/ML)
-from . import continuous_learning_pipeline
-from . import business_impact_reporter
-from . import benchmarking_framework
-from . import advanced_ai_orchestrator
-from . import autonomous_orchestration_engine
-from . import validation_framework
+# Unified modules (merged from multiple files)
+from . import payload_manager
+from . import learning_pipeline
+from . import ai_orchestrator
+from . import knowledge_manager
+from . import scanner
+from . import planning_system
+from . import reporting_system
+from . import testing_system
+from . import bypass_system
+from . import state_manager
+from . import utils
+from . import plugin_runtime
 
-# Adaptive learning submodule
-from . import adaptive
-
-# Legacy config redirect (if still needed)
+# Legacy config redirect
 try:
     from . import config
 except ImportError:
@@ -48,8 +42,14 @@ except ImportError:
 # Main orchestrator class for convenience
 from .orchestrator import CyberShell
 
-# Plugin base classes
-from .plugins import PluginBase, PluginResult
+# Plugin base classes - now from plugin_runtime
+from .plugin_runtime import (
+    PluginBase,
+    PluginResult,
+    PluginMetadata,
+    PluginCapability,
+    PluginRegistry
+)
 
 # Configuration classes
 from .unified_config import (
@@ -58,7 +58,35 @@ from .unified_config import (
     BountyConfig,
     ExploitationConfig,
     LLMConfig,
-    LearningConfig
+    LearningConfig,
+    ReportingConfig,
+    BenchmarkingConfig,
+    ValidationConfig,
+    AutonomyConfig,
+    PluginConfig,
+    NetworkConfig,
+    DebugConfig,
+    RateLimitConfig,
+    VulnerabilityKBConfig,
+    BypassConfig,
+    IntegrationConfig
+)
+
+# Utility classes
+from .utils import (
+    SignalEvent,
+    Tactic,
+    Evidence,
+    ExploitResult,
+    TargetFingerprint,
+    ValidationResult
+)
+
+# State management
+from .state_manager import (
+    UnifiedStateManager,
+    WorkflowState,
+    FeedbackItem
 )
 
 __all__ = [
@@ -70,41 +98,64 @@ __all__ = [
     # Core modules
     'orchestrator',
     'agent',
-    'plugins',
-    'scoring',
-    'strategies',
     'unified_config',
     'config',  # Legacy, redirects to unified_config
-    'llm_connectors',
-    'reporting',
-    'plugin_loader',
-    
-    # Security and bypass modules
-    'vulnerability_kb',
-    'bypass_techniques',
     'rate_limiter',
+    'fingerprinter',
     
-    # Enhancement modules (AI/ML)
-    'continuous_learning_pipeline',
-    'business_impact_reporter',
-    'benchmarking_framework',
-    'advanced_ai_orchestrator',
-    'autonomous_orchestration_engine',
-    'validation_framework',
-    
-    # Adaptive learning submodule
-    'adaptive',
+    # Unified modules
+    'payload_manager',
+    'learning_pipeline',
+    'ai_orchestrator',
+    'knowledge_manager',
+    'scanner',
+    'planning_system',
+    'reporting_system',
+    'testing_system',
+    'bypass_system',
+    'state_manager',
+    'utils',
+    'plugin_runtime',
     
     # Main classes exported for convenience
     'CyberShell',
     'PluginBase',
     'PluginResult',
+    'PluginMetadata',
+    'PluginCapability',
+    'PluginRegistry',
+    
+    # Configuration classes
     'UnifiedConfig',
     'SafetyConfig',
     'BountyConfig',
     'ExploitationConfig',
     'LLMConfig',
-    'LearningConfig'
+    'LearningConfig',
+    'ReportingConfig',
+    'BenchmarkingConfig',
+    'ValidationConfig',
+    'AutonomyConfig',
+    'PluginConfig',
+    'NetworkConfig',
+    'DebugConfig',
+    'RateLimitConfig',
+    'VulnerabilityKBConfig',
+    'BypassConfig',
+    'IntegrationConfig',
+    
+    # Utility classes
+    'SignalEvent',
+    'Tactic',
+    'Evidence',
+    'ExploitResult',
+    'TargetFingerprint',
+    'ValidationResult',
+    
+    # State management
+    'UnifiedStateManager',
+    'WorkflowState',
+    'FeedbackItem'
 ]
 
 def get_version():
@@ -123,7 +174,10 @@ def check_dependencies():
         'streamlit',
         'plotly',
         'requests',
-        'beautifulsoup4'
+        'beautifulsoup4',
+        'aiohttp',  # For async operations
+        'cryptography',  # For JWT handling
+        'python-dotenv'  # For environment variables
     ]
     
     missing = []
@@ -155,3 +209,7 @@ if not logger.handlers:
     logger.addHandler(ch)
 
 logger.info(f"CyberShellV2 v{__version__} initialized")
+
+# Check dependencies on import
+if not check_dependencies():
+    logger.warning("Some dependencies are missing. Framework may not function properly.")
