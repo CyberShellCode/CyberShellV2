@@ -261,3 +261,21 @@ payload_enhancement:
   success_tracking:
     enabled: true
     history_file: "./payload_history.json"
+
+    enhanced:
+  enable_smart_crawler: true
+  enable_waf_bypass: true
+  enable_dynamic_payloads: true
+  adaptive_throttling: true
+  
+learning:
+  model_dir: "models/adaptive"
+  training_threshold: 100
+  feature_extraction:
+    include_waf: true
+    include_enhanced: true
+    
+exploitation:
+  max_bypass_attempts: 5
+  waf_detection_timeout: 5
+  enable_grammar_fuzzing: true
