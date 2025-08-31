@@ -1,6 +1,8 @@
 """
-Unified Scanning and Mapping System for CyberShellV2
-Combines web mapping, external tools, and IDOR hunting capabilities
+Unified Scanning and Mapping System with SmartWebCrawler Integration
+====================================================================
+Enhanced version that integrates JavaScript-aware crawling and advanced
+API discovery capabilities.
 """
 
 import asyncio
@@ -12,10 +14,10 @@ import jwt
 import hashlib
 import tempfile
 import xml.etree.ElementTree as ET
-from typing import Dict, List, Set, Tuple, Any, Optional
-from dataclasses import dataclass, field
-from urllib.parse import urlparse, parse_qs, urljoin
-from collections import defaultdict
+from typing import Dict, List, Set, Tuple, Any, Optional, Union
+from dataclasses import dataclass, field, asdict
+from urllib.parse import urlparse, parse_qs, urljoin, urlunparse
+from collections import defaultdict, deque
 from datetime import datetime, timedelta
 from pathlib import Path
 import logging
@@ -45,33 +47,61 @@ try:
 except ImportError:
     SELENIUM_AVAILABLE = False
 
+# Try to import SmartWebCrawler
+try:
+    from .enhanced.js_aware_crawler import SmartWebCrawler, CrawlResult
+    SMART_CRAWLER_AVAILABLE = True
+except ImportError:
+    SMART_CRAWLER_AVAILABLE = False
+    # Define stubs if not available
+    @dataclass
+    class CrawlResult:
+        endpoints_discovered: List[Any] = field(default_factory=list)
+        javascript_files: List[str] = field(default_factory=list)
+        api_endpoints: List[str] = field(default_factory=list)
+        forms: List[Dict] = field(default_factory=list)
+        vulnerabilities_hints: List[Dict] = field(default_factory=list)
+        websocket_endpoints: List[str] = field(default_factory=list)
+        graphql_endpoints: List[str] = field(default_factory=list)
+        total_pages_crawled: int = 0
+        total_time: float = 0.0
+
 logger = logging.getLogger(__name__)
 
-
 # ============================================================================
-# RATE LIMITING (Shared Component)
+# RATE LIMITING
 # ============================================================================
 
 class RateLimiter:
-    """Unified rate limiter for all scanning operations"""
+    """Enhanced rate limiter with adaptive throttling"""
     
     def __init__(self, requests_per_second: float = 5, burst_size: int = 10, 
-                 respect_headers: bool = True):
+                 respect_headers: bool = True, adaptive: bool = True):
         self.requests_per_second = requests_per_second
         self.burst_size = burst_size
         self.respect_headers = respect_headers
+        self.adaptive = adaptive
         self.last_request_time = 0
         self.request_count = 0
         self.retry_after = 0
+        
+        # Adaptive throttling
+        self.response_times = deque(maxlen=20)
+        self.error_count = 0
+        self.last_error_time = 0
     
     async def acquire(self):
-        """Acquire permission to make a request"""
+        """Acquire permission to make a request with adaptive throttling"""
         current_time = time.time()
         
         # Check if we need to wait for retry-after
         if self.retry_after > current_time:
             await asyncio.sleep(self.retry_after - current_time)
             self.retry_after = 0
+        
+        # Adaptive rate adjustment
+        if self.adaptive:
+            self._adjust_rate()
         
         # Simple rate limiting
         time_since_last = current_time - self.last_request_time
@@ -81,8 +111,11 @@ class RateLimiter:
         self.last_request_time = time.time()
         self.request_count += 1
     
-    def update_from_response(self, response_headers: Dict):
-        """Update rate limits based on response headers"""
+    def update_from_response(self, response_headers: Dict, response_time: float = None):
+        """Update rate limits based on response"""
+        if response_time:
+            self.response_times.append(response_time)
+        
         if not self.respect_headers:
             return
         
@@ -93,30 +126,52 @@ class RateLimiter:
                 retry_after = response_headers.get('X-RateLimit-Reset', 
                                                   response_headers.get('Retry-After', 60))
                 self.retry_after = time.time() + float(retry_after)
-
+        
+        # Check for 429 status (handled by caller)
+        if response_headers.get('status') == '429':
+            self.error_count += 1
+            self.last_error_time = time.time()
+    
+    def _adjust_rate(self):
+        """Adaptively adjust request rate based on performance"""
+        # Too many errors - slow down
+        if self.error_count > 3 and time.time() - self.last_error_time < 60:
+            self.requests_per_second = max(1, self.requests_per_second * 0.5)
+            self.error_count = 0
+            logger.info(f"Slowing down to {self.requests_per_second} req/s due to errors")
+        
+        # Response times increasing - slow down
+        elif len(self.response_times) >= 10:
+            avg_time = sum(self.response_times) / len(self.response_times)
+            if avg_time > 2.0:  # Responses taking too long
+                self.requests_per_second = max(1, self.requests_per_second * 0.8)
+                logger.debug(f"Adjusting rate to {self.requests_per_second} req/s")
 
 # ============================================================================
-# FINGERPRINTING (Shared Component)
+# FINGERPRINTING
 # ============================================================================
 
 @dataclass
 class TargetFingerprint:
-    """Target fingerprint information"""
+    """Enhanced target fingerprint information"""
     product: Optional[str] = None
     version: Optional[str] = None
     cms: Optional[str] = None
     server: Optional[str] = None
     technologies: List[str] = field(default_factory=list)
     headers: Dict[str, str] = field(default_factory=dict)
-
+    javascript_libraries: List[str] = field(default_factory=list)
+    api_type: Optional[str] = None  # REST, GraphQL, WebSocket
+    frameworks: List[str] = field(default_factory=list)
+    waf: Optional[str] = None
 
 # ============================================================================
-# COMMON DATA STRUCTURES
+# ENHANCED DATA STRUCTURES
 # ============================================================================
 
 @dataclass
 class Endpoint:
-    """Unified endpoint representation"""
+    """Enhanced endpoint representation with JavaScript awareness"""
     url: str
     method: str = "GET"
     parameters: Dict[str, List[str]] = field(default_factory=dict)
@@ -130,15 +185,23 @@ class Endpoint:
     javascript_events: List[str] = field(default_factory=list)
     api_calls: List[str] = field(default_factory=list)
     potential_vulns: List[str] = field(default_factory=list)
-    object_references: List[str] = field(default_factory=list)  # For IDOR
+    object_references: List[str] = field(default_factory=list)
     requires_csrf: bool = False
     graphql_endpoint: bool = False
     discovered_at: float = field(default_factory=time.time)
-
+    
+    # Enhanced fields for JS-aware crawling
+    javascript_rendered: bool = False
+    dynamic_content: bool = False
+    websocket_endpoint: bool = False
+    ajax_endpoints: List[str] = field(default_factory=list)
+    dom_xss_sinks: List[str] = field(default_factory=list)
+    client_side_routes: List[str] = field(default_factory=list)
+    api_documentation: Optional[str] = None
 
 @dataclass
 class ScanResult:
-    """Unified scan result structure"""
+    """Enhanced scan result structure"""
     target: str
     timestamp: float
     endpoints: List[Endpoint]
@@ -147,15 +210,22 @@ class ScanResult:
     credentials: Dict[str, Any]
     fingerprint: TargetFingerprint
     evidence: List[Any]
-
+    
+    # Enhanced fields
+    javascript_analysis: Dict[str, Any] = field(default_factory=dict)
+    api_schema: Optional[Dict] = None
+    graphql_schema: Optional[str] = None
+    websocket_messages: List[Dict] = field(default_factory=list)
+    spa_routes: List[str] = field(default_factory=list)
+    client_storage: Dict[str, List] = field(default_factory=dict)
 
 # ============================================================================
-# WEB APPLICATION MAPPER (from mapper.py)
+# ENHANCED WEB APPLICATION MAPPER
 # ============================================================================
 
 @dataclass
 class WebAppMap:
-    """Complete map of the web application"""
+    """Enhanced web application map with JavaScript awareness"""
     endpoints: Dict[str, Endpoint] = field(default_factory=dict)
     graph: nx.DiGraph = field(default_factory=nx.DiGraph)
     technologies: Set[str] = field(default_factory=set)
@@ -164,10 +234,17 @@ class WebAppMap:
     file_upload_endpoints: List[str] = field(default_factory=list)
     admin_endpoints: List[str] = field(default_factory=list)
     vulnerability_map: Dict[str, List[Endpoint]] = field(default_factory=dict)
-
+    
+    # Enhanced fields
+    javascript_files: List[str] = field(default_factory=list)
+    api_documentation: Dict[str, Any] = field(default_factory=dict)
+    graphql_endpoints: List[str] = field(default_factory=list)
+    websocket_endpoints: List[str] = field(default_factory=list)
+    spa_routes: List[str] = field(default_factory=list)
+    client_side_vulns: Dict[str, List] = field(default_factory=dict)
 
 class WebApplicationMapper:
-    """Advanced web application mapper with HTTP interception"""
+    """Enhanced web application mapper with SmartWebCrawler integration"""
     
     def __init__(self, rate_limiter: RateLimiter, proxy_port: int = 8080):
         self.rate_limiter = rate_limiter
@@ -175,24 +252,41 @@ class WebApplicationMapper:
         self.webapp_map = WebAppMap()
         self.discovered_urls = set()
         self.vuln_patterns = self._init_vuln_patterns()
+        
+        # Initialize SmartWebCrawler if available
+        self.smart_crawler = None
+        if SMART_CRAWLER_AVAILABLE:
+            try:
+                self.smart_crawler = SmartWebCrawler(max_depth=3, max_pages=100)
+                logger.info("SmartWebCrawler integrated successfully")
+            except Exception as e:
+                logger.warning(f"Could not initialize SmartWebCrawler: {e}")
     
     def _init_vuln_patterns(self) -> Dict[str, List[Dict]]:
-        """Initialize vulnerability detection patterns"""
+        """Enhanced vulnerability detection patterns"""
         return {
             'sqli': [
                 {'param_pattern': r'(id|user|account|number|order)', 'weight': 0.7},
                 {'param_pattern': r'(select|search|filter|sort)', 'weight': 0.6},
-                {'endpoint_pattern': r'/api/.*/(users|products|orders)', 'weight': 0.8}
+                {'endpoint_pattern': r'/api/.*/(users|products|orders)', 'weight': 0.8},
+                {'param_pattern': r'(query|q|sql)', 'weight': 0.5}
             ],
             'xss': [
                 {'param_pattern': r'(q|query|search|message|comment|name)', 'weight': 0.7},
                 {'param_pattern': r'(input|text|data|content)', 'weight': 0.5},
-                {'content_type': 'text/html', 'weight': 0.8}
+                {'content_type': 'text/html', 'weight': 0.8},
+                {'javascript_rendered': True, 'weight': 0.6}
+            ],
+            'dom_xss': [
+                {'client_side_route': True, 'weight': 0.8},
+                {'dom_sink': True, 'weight': 0.9},
+                {'javascript_rendered': True, 'weight': 0.7}
             ],
             'idor': [
                 {'param_pattern': r'(id|uid|userid|doc|file)=\d+', 'weight': 0.9},
                 {'endpoint_pattern': r'/api/.*/\d+', 'weight': 0.8},
-                {'endpoint_pattern': r'/(profile|account|user)/\d+', 'weight': 0.9}
+                {'endpoint_pattern': r'/(profile|account|user)/\d+', 'weight': 0.9},
+                {'graphql': True, 'weight': 0.7}
             ],
             'lfi': [
                 {'param_pattern': r'(file|path|template|page|include)', 'weight': 0.8},
@@ -200,7 +294,8 @@ class WebApplicationMapper:
             ],
             'rce': [
                 {'param_pattern': r'(cmd|exec|command|run|ping)', 'weight': 0.9},
-                {'endpoint_pattern': r'/(admin|debug|test)', 'weight': 0.6}
+                {'endpoint_pattern': r'/(admin|debug|test)', 'weight': 0.6},
+                {'websocket': True, 'weight': 0.5}
             ],
             'xxe': [
                 {'content_type': 'application/xml', 'weight': 0.9},
@@ -209,29 +304,46 @@ class WebApplicationMapper:
             ],
             'ssrf': [
                 {'param_pattern': r'(url|uri|target|host|proxy)', 'weight': 0.8},
-                {'param_pattern': r'(callback|webhook|fetch)', 'weight': 0.7}
+                {'param_pattern': r'(callback|webhook|fetch)', 'weight': 0.7},
+                {'graphql': True, 'weight': 0.6}
             ],
             'upload': [
                 {'endpoint_pattern': r'/(upload|import|file)', 'weight': 0.9},
                 {'param_pattern': r'(file|upload|attachment)', 'weight': 0.8}
+            ],
+            'api_key_exposure': [
+                {'javascript_file': True, 'weight': 0.9},
+                {'client_storage': True, 'weight': 0.8}
             ]
         }
     
     async def map_application(self, target: str, duration: int = 300, 
-                             use_browser: bool = True) -> WebAppMap:
-        """Map web application structure"""
+                             use_browser: bool = True, use_smart_crawler: bool = True) -> WebAppMap:
+        """Enhanced application mapping with SmartWebCrawler"""
         tasks = []
+        
+        # Use SmartWebCrawler if available and enabled
+        if use_smart_crawler and self.smart_crawler:
+            logger.info("Starting SmartWebCrawler for JavaScript-aware crawling")
+            crawl_result = await self._smart_crawl(target)
+            self._process_smart_crawl_results(crawl_result)
         
         # Start HTTP proxy if available
         if MITMPROXY_AVAILABLE:
             tasks.append(self._start_proxy())
         
-        # Browser-based crawling
-        if use_browser and PLAYWRIGHT_AVAILABLE:
+        # Traditional browser-based crawling (as fallback or complement)
+        if use_browser and PLAYWRIGHT_AVAILABLE and not self.smart_crawler:
             tasks.append(self._browser_crawl_playwright(target))
         
         # API discovery
         tasks.append(self._discover_apis(target))
+        
+        # JavaScript analysis
+        tasks.append(self._analyze_javascript(target))
+        
+        # GraphQL introspection
+        tasks.append(self._introspect_graphql(target))
         
         # Run tasks
         if tasks:
@@ -240,8 +352,189 @@ class WebApplicationMapper:
         # Analyze collected data
         self._analyze_relationships()
         self._categorize_endpoints()
+        self._detect_client_side_vulns()
         
         return self.webapp_map
+    
+    async def _smart_crawl(self, target: str) -> CrawlResult:
+        """Use SmartWebCrawler for enhanced crawling"""
+        try:
+            result = await self.smart_crawler.crawl(target)
+            logger.info(f"SmartWebCrawler discovered {len(result.endpoints_discovered)} endpoints")
+            return result
+        except Exception as e:
+            logger.error(f"SmartWebCrawler error: {e}")
+            return CrawlResult()
+    
+    def _process_smart_crawl_results(self, crawl_result: CrawlResult):
+        """Process results from SmartWebCrawler"""
+        # Process discovered endpoints
+        for endpoint_data in crawl_result.endpoints_discovered:
+            endpoint = Endpoint(
+                url=endpoint_data.get('url', ''),
+                method=endpoint_data.get('method', 'GET'),
+                javascript_rendered=True,
+                dynamic_content=True
+            )
+            
+            # Extract parameters from URL
+            parsed = urlparse(endpoint.url)
+            if parsed.query:
+                endpoint.parameters = parse_qs(parsed.query)
+            
+            # Mark as API endpoint if applicable
+            if '/api/' in endpoint.url or endpoint.url in crawl_result.api_endpoints:
+                endpoint.api_calls.append(endpoint.url)
+            
+            # Check for GraphQL
+            if endpoint.url in crawl_result.graphql_endpoints:
+                endpoint.graphql_endpoint = True
+                self.webapp_map.graphql_endpoints.append(endpoint.url)
+            
+            # Check for WebSocket
+            if endpoint.url in crawl_result.websocket_endpoints:
+                endpoint.websocket_endpoint = True
+                self.webapp_map.websocket_endpoints.append(endpoint.url)
+            
+            # Detect potential vulnerabilities
+            endpoint.potential_vulns = self._detect_vulnerabilities(endpoint)
+            
+            endpoint_key = f"{endpoint.method}:{urlparse(endpoint.url).path}"
+            self.webapp_map.endpoints[endpoint_key] = endpoint
+            self.discovered_urls.add(endpoint.url)
+        
+        # Process JavaScript files
+        self.webapp_map.javascript_files.extend(crawl_result.javascript_files)
+        
+        # Process API endpoints
+        self.webapp_map.api_endpoints.extend(crawl_result.api_endpoints)
+        
+        # Process forms
+        for form in crawl_result.forms:
+            self._process_form(form.get('action', ''), form)
+        
+        # Process vulnerability hints
+        for hint in crawl_result.vulnerabilities_hints:
+            vuln_type = hint.get('type')
+            if vuln_type not in self.webapp_map.vulnerability_map:
+                self.webapp_map.vulnerability_map[vuln_type] = []
+            
+            # Create endpoint for vulnerability
+            vuln_endpoint = Endpoint(
+                url=hint.get('location', ''),
+                potential_vulns=[vuln_type]
+            )
+            self.webapp_map.vulnerability_map[vuln_type].append(vuln_endpoint)
+    
+    async def _analyze_javascript(self, target: str):
+        """Analyze JavaScript files for security issues"""
+        js_files = self.webapp_map.javascript_files[:20]  # Limit analysis
+        
+        for js_url in js_files:
+            await self.rate_limiter.acquire()
+            
+            try:
+                response = requests.get(js_url, timeout=10, verify=False)
+                if response.status_code == 200:
+                    self._analyze_js_content(response.text, js_url)
+            except:
+                continue
+    
+    def _analyze_js_content(self, content: str, url: str):
+        """Analyze JavaScript content for security issues"""
+        # API key patterns
+        api_key_patterns = [
+            r'["\']api[_-]?key["\']\s*[:=]\s*["\']([^"\']+)["\']',
+            r'["\']apiKey["\']\s*[:=]\s*["\']([^"\']+)["\']',
+            r'["\']access[_-]?token["\']\s*[:=]\s*["\']([^"\']+)["\']',
+            r'["\']secret["\']\s*[:=]\s*["\']([^"\']+)["\']'
+        ]
+        
+        for pattern in api_key_patterns:
+            matches = re.findall(pattern, content, re.IGNORECASE)
+            if matches:
+                if 'api_key_exposure' not in self.webapp_map.client_side_vulns:
+                    self.webapp_map.client_side_vulns['api_key_exposure'] = []
+                
+                self.webapp_map.client_side_vulns['api_key_exposure'].append({
+                    'file': url,
+                    'keys_found': len(matches)
+                })
+        
+        # DOM XSS sinks
+        dom_sinks = [
+            'innerHTML', 'outerHTML', 'document.write', 'document.writeln',
+            'eval', 'setTimeout', 'setInterval', 'Function', 'location.href'
+        ]
+        
+        for sink in dom_sinks:
+            if sink in content:
+                if 'dom_xss' not in self.webapp_map.client_side_vulns:
+                    self.webapp_map.client_side_vulns['dom_xss'] = []
+                
+                self.webapp_map.client_side_vulns['dom_xss'].append({
+                    'file': url,
+                    'sink': sink
+                })
+        
+        # Extract API endpoints from JavaScript
+        api_patterns = [
+            r'fetch\(["\']([^"\']+)["\']',
+            r'axios\.[get|post|put|delete]\(["\']([^"\']+)["\']',
+            r'\.ajax\(\{[^}]*url:\s*["\']([^"\']+)["\']'
+        ]
+        
+        for pattern in api_patterns:
+            matches = re.findall(pattern, content)
+            for match in matches:
+                if match.startswith('/'):
+                    api_url = urljoin(url, match)
+                    if api_url not in self.webapp_map.api_endpoints:
+                        self.webapp_map.api_endpoints.append(api_url)
+    
+    async def _introspect_graphql(self, target: str):
+        """Attempt GraphQL introspection"""
+        graphql_paths = ['/graphql', '/api/graphql', '/v1/graphql', '/query']
+        
+        introspection_query = {
+            "query": """
+                query IntrospectionQuery {
+                    __schema {
+                        types {
+                            name
+                            fields {
+                                name
+                                type { name }
+                            }
+                        }
+                    }
+                }
+            """
+        }
+        
+        for path in graphql_paths:
+            await self.rate_limiter.acquire()
+            
+            full_url = urljoin(target, path)
+            try:
+                response = requests.post(
+                    full_url,
+                    json=introspection_query,
+                    timeout=10,
+                    verify=False
+                )
+                
+                if response.status_code == 200:
+                    try:
+                        data = response.json()
+                        if 'data' in data and '__schema' in data['data']:
+                            self.webapp_map.graphql_endpoints.append(full_url)
+                            self.webapp_map.api_documentation['graphql_schema'] = data['data']
+                            logger.info(f"GraphQL introspection successful at {full_url}")
+                    except:
+                        pass
+            except:
+                continue
     
     async def _start_proxy(self):
         """Start mitmproxy for HTTP interception"""
@@ -257,6 +550,9 @@ class WebApplicationMapper:
             
             def response(self, flow: http.HTTPFlow):
                 self.mapper._process_response(flow)
+            
+            def websocket_message(self, flow: http.HTTPFlow):
+                self.mapper._process_websocket(flow)
         
         opts = options.Options(listen_port=self.proxy_port)
         proxy_master = DumpMaster(opts)
@@ -285,12 +581,16 @@ class WebApplicationMapper:
             endpoint.parameters = parse_qs(parsed.query)
         elif request.method == "POST" and request.content:
             try:
-                endpoint.parameters = parse_qs(request.content.decode())
-            except:
-                try:
+                if 'application/json' in request.headers.get('Content-Type', ''):
                     endpoint.parameters = json.loads(request.content)
-                except:
-                    pass
+                else:
+                    endpoint.parameters = parse_qs(request.content.decode())
+            except:
+                pass
+        
+        # Check for GraphQL
+        if 'graphql' in url.lower() or request.content and b'query' in request.content:
+            endpoint.graphql_endpoint = True
         
         endpoint.potential_vulns = self._detect_vulnerabilities(endpoint)
         
@@ -299,7 +599,7 @@ class WebApplicationMapper:
         self.discovered_urls.add(url)
     
     def _process_response(self, flow: http.HTTPFlow):
-        """Process intercepted HTTP response"""
+        """Enhanced response processing"""
         request = flow.request
         response = flow.response
         
@@ -313,45 +613,156 @@ class WebApplicationMapper:
             if response.status_code in [401, 403]:
                 endpoint.auth_required = True
             
+            # Extract forms and JavaScript references
             if "text/html" in endpoint.content_type:
                 endpoint.forms = self._extract_forms(response.content)
+                self._extract_js_references(response.content)
+            
+            # Check for API documentation
+            if response.status_code == 200:
+                if '/swagger' in request.pretty_url or '/openapi' in request.pretty_url:
+                    try:
+                        self.webapp_map.api_documentation['swagger'] = json.loads(response.content)
+                    except:
+                        pass
+    
+    def _process_websocket(self, flow: http.HTTPFlow):
+        """Process WebSocket messages"""
+        endpoint_key = f"WS:{urlparse(flow.request.pretty_url).path}"
+        
+        if endpoint_key not in self.webapp_map.endpoints:
+            endpoint = Endpoint(
+                url=flow.request.pretty_url,
+                method="WEBSOCKET",
+                websocket_endpoint=True
+            )
+            self.webapp_map.endpoints[endpoint_key] = endpoint
+            self.webapp_map.websocket_endpoints.append(flow.request.pretty_url)
+    
+    def _extract_js_references(self, content: bytes):
+        """Extract JavaScript file references from HTML"""
+        try:
+            soup = BeautifulSoup(content, 'html.parser')
+            
+            # Find script tags
+            for script in soup.find_all('script'):
+                src = script.get('src')
+                if src and src not in self.webapp_map.javascript_files:
+                    self.webapp_map.javascript_files.append(src)
+        except:
+            pass
     
     async def _browser_crawl_playwright(self, target: str):
-        """Use Playwright for JavaScript-aware crawling"""
+        """Enhanced browser crawling with JavaScript execution tracking"""
         if not PLAYWRIGHT_AVAILABLE:
             return
         
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             context = await browser.new_context(ignore_https_errors=True)
+            
+            # Enable request interception
+            await context.route('**/*', self._intercept_request)
+            
             page = await context.new_page()
+            
+            # Monitor console for errors and API calls
+            page.on('console', self._handle_console)
             
             await self._crawl_page(page, target)
             await browser.close()
     
+    async def _intercept_request(self, route):
+        """Intercept and analyze browser requests"""
+        request = route.request
+        
+        # Track AJAX/API calls
+        if request.resource_type in ['xhr', 'fetch']:
+            url = request.url
+            if url not in self.webapp_map.api_endpoints:
+                self.webapp_map.api_endpoints.append(url)
+        
+        await route.continue_()
+    
+    def _handle_console(self, message):
+        """Handle console messages for error detection"""
+        if message.type in ['error', 'warning']:
+            text = message.text
+            
+            # Check for security-relevant errors
+            if any(keyword in text.lower() for keyword in ['cors', 'csp', 'mixed content']):
+                if 'console_errors' not in self.webapp_map.client_side_vulns:
+                    self.webapp_map.client_side_vulns['console_errors'] = []
+                
+                self.webapp_map.client_side_vulns['console_errors'].append({
+                    'type': message.type,
+                    'text': text[:200]
+                })
+    
     async def _crawl_page(self, page, url: str, depth: int = 0, max_depth: int = 3):
-        """Recursively crawl pages"""
+        """Enhanced page crawling with client-side analysis"""
         if depth > max_depth:
             return
         
         try:
             await page.goto(url, wait_until="networkidle")
             
-            # Extract links
+            # Extract client-side routes (for SPAs)
+            spa_routes = await page.evaluate("""
+                () => {
+                    const routes = [];
+                    // Check for React Router
+                    if (window.__REACT_DEVTOOLS_GLOBAL_HOOK__) {
+                        // Extract routes if accessible
+                    }
+                    // Check for Vue Router
+                    if (window.$nuxt || window.__VUE__) {
+                        // Extract routes if accessible
+                    }
+                    // Check for Angular
+                    if (window.ng) {
+                        // Extract routes if accessible
+                    }
+                    return routes;
+                }
+            """)
+            
+            if spa_routes:
+                self.webapp_map.spa_routes.extend(spa_routes)
+            
+            # Extract localStorage and sessionStorage
+            storage_data = await page.evaluate("""
+                () => ({
+                    localStorage: Object.keys(localStorage || {}),
+                    sessionStorage: Object.keys(sessionStorage || {})
+                })
+            """)
+            
+            if storage_data['localStorage'] or storage_data['sessionStorage']:
+                if 'client_storage' not in self.webapp_map.client_side_vulns:
+                    self.webapp_map.client_side_vulns['client_storage'] = []
+                
+                self.webapp_map.client_side_vulns['client_storage'].append({
+                    'url': url,
+                    'localStorage_keys': storage_data['localStorage'],
+                    'sessionStorage_keys': storage_data['sessionStorage']
+                })
+            
+            # Extract links and forms
             links = await page.evaluate("""
                 () => Array.from(document.querySelectorAll('a[href]'))
                     .map(a => a.href)
                     .filter(href => href.startsWith('http'))
             """)
             
-            # Extract forms
             forms = await page.evaluate("""
                 () => Array.from(document.querySelectorAll('form')).map(form => ({
                     action: form.action,
                     method: form.method,
                     inputs: Array.from(form.querySelectorAll('input')).map(input => ({
                         name: input.name,
-                        type: input.type
+                        type: input.type,
+                        value: input.value
                     }))
                 }))
             """)
@@ -368,10 +779,20 @@ class WebApplicationMapper:
             logger.error(f"Error crawling {url}: {e}")
     
     async def _discover_apis(self, target: str):
-        """Discover API endpoints"""
+        """Enhanced API discovery"""
         common_paths = [
-            '/api/v1', '/api', '/graphql', '/api/users',
-            '/api/auth', '/api/login', '/api/admin'
+            '/api', '/api/v1', '/api/v2', '/v1', '/v2',
+            '/graphql', '/api/graphql',
+            '/swagger', '/swagger-ui', '/api-docs', '/openapi',
+            '/ws', '/websocket', '/socket.io',
+            '/.well-known/openapi.json'
+        ]
+        
+        # Common API documentation paths
+        doc_paths = [
+            '/swagger.json', '/swagger.yaml',
+            '/openapi.json', '/openapi.yaml',
+            '/api-docs.json', '/api/swagger.json'
         ]
         
         for path in common_paths:
@@ -382,31 +803,99 @@ class WebApplicationMapper:
                 response = requests.get(full_url, timeout=10, verify=False)
                 if response.status_code in [200, 201, 401, 403]:
                     self.webapp_map.api_endpoints.append(full_url)
+                    
+                    # Check if it's GraphQL
+                    if 'graphql' in path.lower():
+                        self.webapp_map.graphql_endpoints.append(full_url)
+            except:
+                continue
+        
+        # Try to fetch API documentation
+        for doc_path in doc_paths:
+            await self.rate_limiter.acquire()
+            
+            doc_url = urljoin(target, doc_path)
+            try:
+                response = requests.get(doc_url, timeout=10, verify=False)
+                if response.status_code == 200:
+                    content_type = response.headers.get('Content-Type', '')
+                    
+                    if 'json' in content_type:
+                        self.webapp_map.api_documentation['openapi'] = response.json()
+                        self._parse_openapi_spec(response.json())
+                    elif 'yaml' in content_type:
+                        # Would need yaml parser
+                        pass
             except:
                 continue
     
+    def _parse_openapi_spec(self, spec: Dict):
+        """Parse OpenAPI/Swagger specification"""
+        if 'paths' in spec:
+            for path, methods in spec['paths'].items():
+                for method, details in methods.items():
+                    if method.upper() in ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']:
+                        endpoint = Endpoint(
+                            url=path,
+                            method=method.upper(),
+                            api_documentation=json.dumps(details)
+                        )
+                        
+                        # Extract parameters
+                        if 'parameters' in details:
+                            for param in details['parameters']:
+                                param_name = param.get('name', '')
+                                if param_name:
+                                    if param_name not in endpoint.parameters:
+                                        endpoint.parameters[param_name] = []
+                        
+                        endpoint_key = f"{method.upper()}:{path}"
+                        self.webapp_map.endpoints[endpoint_key] = endpoint
+    
     def _detect_vulnerabilities(self, endpoint: Endpoint) -> List[str]:
-        """Detect potential vulnerabilities in endpoint"""
+        """Enhanced vulnerability detection with JavaScript awareness"""
         potential_vulns = []
         
         for vuln_type, patterns in self.vuln_patterns.items():
             total_weight = 0.0
             
             for pattern in patterns:
+                # Parameter pattern matching
                 if 'param_pattern' in pattern:
                     param_regex = re.compile(pattern['param_pattern'], re.I)
                     for param_name in endpoint.parameters.keys():
-                        if param_regex.search(param_name):
+                        if param_regex.search(str(param_name)):
                             total_weight += pattern['weight']
                 
+                # Endpoint pattern matching
                 if 'endpoint_pattern' in pattern:
                     endpoint_regex = re.compile(pattern['endpoint_pattern'], re.I)
                     if endpoint_regex.search(endpoint.url):
                         total_weight += pattern['weight']
                 
+                # Content type matching
                 if 'content_type' in pattern:
                     if pattern['content_type'] in endpoint.content_type:
                         total_weight += pattern['weight']
+                
+                # JavaScript-specific checks
+                if 'javascript_rendered' in pattern and endpoint.javascript_rendered:
+                    total_weight += pattern['weight']
+                
+                if 'client_side_route' in pattern and endpoint.client_side_routes:
+                    total_weight += pattern['weight']
+                
+                if 'dom_sink' in pattern and endpoint.dom_xss_sinks:
+                    total_weight += pattern['weight']
+                
+                if 'graphql' in pattern and endpoint.graphql_endpoint:
+                    total_weight += pattern['weight']
+                
+                if 'websocket' in pattern and endpoint.websocket_endpoint:
+                    total_weight += pattern['weight']
+                
+                if 'javascript_file' in pattern and endpoint.url.endswith('.js'):
+                    total_weight += pattern['weight']
             
             if total_weight >= 0.6:
                 potential_vulns.append(vuln_type)
@@ -417,6 +906,27 @@ class WebApplicationMapper:
         
         return potential_vulns
     
+    def _detect_client_side_vulns(self):
+        """Detect client-side vulnerabilities"""
+        # DOM XSS detection
+        for endpoint in self.webapp_map.endpoints.values():
+            if endpoint.dom_xss_sinks:
+                if 'dom_xss' not in self.webapp_map.vulnerability_map:
+                    self.webapp_map.vulnerability_map['dom_xss'] = []
+                self.webapp_map.vulnerability_map['dom_xss'].append(endpoint)
+        
+        # Exposed API keys
+        if 'api_key_exposure' in self.webapp_map.client_side_vulns:
+            if 'api_key_exposure' not in self.webapp_map.vulnerability_map:
+                self.webapp_map.vulnerability_map['api_key_exposure'] = []
+            
+            for exposure in self.webapp_map.client_side_vulns['api_key_exposure']:
+                endpoint = Endpoint(
+                    url=exposure['file'],
+                    potential_vulns=['api_key_exposure']
+                )
+                self.webapp_map.vulnerability_map['api_key_exposure'].append(endpoint)
+    
     def _analyze_relationships(self):
         """Analyze relationships between endpoints"""
         for endpoint_key, endpoint in self.webapp_map.endpoints.items():
@@ -424,6 +934,7 @@ class WebApplicationMapper:
             
             for other_key, other_endpoint in self.webapp_map.endpoints.items():
                 if endpoint_key != other_key:
+                    # Check parameter overlap
                     shared_params = set(endpoint.parameters.keys()) & set(other_endpoint.parameters.keys())
                     if shared_params:
                         self.webapp_map.graph.add_edge(
@@ -431,26 +942,39 @@ class WebApplicationMapper:
                             other_key,
                             shared_params=list(shared_params)
                         )
+                    
+                    # Check API call relationships
+                    if endpoint.url in other_endpoint.api_calls:
+                        self.webapp_map.graph.add_edge(
+                            other_key,
+                            endpoint_key,
+                            relationship='api_call'
+                        )
     
     def _categorize_endpoints(self):
-        """Categorize endpoints by functionality"""
+        """Enhanced endpoint categorization"""
         for endpoint_key, endpoint in self.webapp_map.endpoints.items():
             url_lower = endpoint.url.lower()
             
-            if any(auth in url_lower for auth in ['login', 'signin', 'auth', 'oauth']):
+            # Authentication endpoints
+            if any(auth in url_lower for auth in ['login', 'signin', 'auth', 'oauth', 'jwt', 'token']):
                 self.webapp_map.authentication_endpoints.append(endpoint.url)
             
-            if any(admin in url_lower for admin in ['admin', 'manage', 'dashboard']):
+            # Admin endpoints
+            if any(admin in url_lower for admin in ['admin', 'manage', 'dashboard', 'control']):
                 self.webapp_map.admin_endpoints.append(endpoint.url)
             
-            if '/api/' in url_lower or '/v1/' in url_lower or '/v2/' in url_lower:
-                self.webapp_map.api_endpoints.append(endpoint.url)
+            # API endpoints
+            if '/api/' in url_lower or '/v1/' in url_lower or '/v2/' in url_lower or endpoint.graphql_endpoint:
+                if endpoint.url not in self.webapp_map.api_endpoints:
+                    self.webapp_map.api_endpoints.append(endpoint.url)
             
-            if any(upload in url_lower for upload in ['upload', 'import', 'file']):
+            # File upload endpoints
+            if any(upload in url_lower for upload in ['upload', 'import', 'file', 'attachment']):
                 self.webapp_map.file_upload_endpoints.append(endpoint.url)
     
     def _extract_forms(self, content: bytes) -> List[Dict]:
-        """Extract forms from HTML content"""
+        """Extract and analyze forms from HTML content"""
         forms = []
         try:
             soup = BeautifulSoup(content, 'html.parser')
@@ -458,13 +982,22 @@ class WebApplicationMapper:
                 form_data = {
                     'action': form.get('action', ''),
                     'method': form.get('method', 'GET'),
-                    'inputs': []
+                    'inputs': [],
+                    'csrf_token': False
                 }
+                
                 for input_elem in form.find_all(['input', 'select', 'textarea']):
-                    form_data['inputs'].append({
+                    input_data = {
                         'name': input_elem.get('name', ''),
-                        'type': input_elem.get('type', 'text')
-                    })
+                        'type': input_elem.get('type', 'text'),
+                        'value': input_elem.get('value', '')
+                    }
+                    form_data['inputs'].append(input_data)
+                    
+                    # Check for CSRF token
+                    if 'csrf' in input_data['name'].lower() or 'token' in input_data['name'].lower():
+                        form_data['csrf_token'] = True
+                
                 forms.append(form_data)
         except:
             pass
@@ -475,7 +1008,8 @@ class WebApplicationMapper:
         endpoint = Endpoint(
             url=form.get('action', url),
             method=form.get('method', 'POST').upper(),
-            forms=[form]
+            forms=[form],
+            requires_csrf=form.get('csrf_token', False)
         )
         
         for input_field in form.get('inputs', []):
@@ -483,6 +1017,7 @@ class WebApplicationMapper:
             if param_name:
                 if param_name not in endpoint.parameters:
                     endpoint.parameters[param_name] = []
+                endpoint.parameters[param_name].append(input_field.get('value', ''))
         
         endpoint.potential_vulns = self._detect_vulnerabilities(endpoint)
         
@@ -497,7 +1032,7 @@ class WebApplicationMapper:
 
 
 # ============================================================================
-# IDOR HUNTER (from advanced_idor_hunter.py)
+# IDOR HUNTER (kept from original)
 # ============================================================================
 
 @dataclass
@@ -900,7 +1435,7 @@ class IDORHunter:
 
 
 # ============================================================================
-# EXTERNAL TOOLS (from external_tools.py)
+# EXTERNAL TOOLS (kept from original)
 # ============================================================================
 
 @dataclass
@@ -1166,16 +1701,17 @@ class ExternalToolsManager:
 # ============================================================================
 
 class UnifiedScanner:
-    """Unified scanning and mapping system"""
+    """Enhanced unified scanning and mapping system with SmartWebCrawler"""
     
     def __init__(self, config: Optional[Dict] = None):
         self.config = config or {}
         
-        # Initialize rate limiter
+        # Initialize enhanced rate limiter
         self.rate_limiter = RateLimiter(
             requests_per_second=self.config.get('requests_per_second', 5),
             burst_size=self.config.get('burst_size', 10),
-            respect_headers=self.config.get('respect_headers', True)
+            respect_headers=self.config.get('respect_headers', True),
+            adaptive=self.config.get('adaptive_throttling', True)
         )
         
         # Initialize components
@@ -1187,10 +1723,13 @@ class UnifiedScanner:
         )
         
         self.fingerprint = TargetFingerprint()
+        
+        # SmartWebCrawler reference (if available)
+        self.smart_crawler = self.web_mapper.smart_crawler
     
     async def comprehensive_scan(self, target: str, options: Dict[str, Any] = None) -> ScanResult:
         """
-        Perform comprehensive scan of target
+        Enhanced comprehensive scan with JavaScript awareness
         
         Args:
             target: Target URL/IP to scan
@@ -1200,6 +1739,7 @@ class UnifiedScanner:
                 - enable_sqlmap: Enable SQLMap testing
                 - enable_idor: Enable IDOR hunting
                 - use_browser: Use browser automation
+                - use_smart_crawler: Use SmartWebCrawler
                 
         Returns:
             Comprehensive scan results
@@ -1230,12 +1770,13 @@ class UnifiedScanner:
                 }
                 self._update_fingerprint_from_nmap(nmap_result)
         
-        # Phase 2: Web application mapping
-        logger.info(f"Starting web application mapping on {target}")
+        # Phase 2: Enhanced web application mapping
+        logger.info(f"Starting enhanced web application mapping on {target}")
         webapp_map = await self.web_mapper.map_application(
             target,
             duration=300 if scan_type == 'aggressive' else 60,
-            use_browser=options.get('use_browser', True)
+            use_browser=options.get('use_browser', True),
+            use_smart_crawler=options.get('use_smart_crawler', True)
         )
         
         # Convert webapp endpoints to unified format
@@ -1244,6 +1785,19 @@ class UnifiedScanner:
         
         # Store vulnerability map
         result.vulnerabilities.update(webapp_map.vulnerability_map)
+        
+        # Store JavaScript analysis results
+        result.javascript_analysis = {
+            'javascript_files': webapp_map.javascript_files,
+            'client_side_vulns': webapp_map.client_side_vulns,
+            'spa_routes': webapp_map.spa_routes,
+            'graphql_endpoints': webapp_map.graphql_endpoints,
+            'websocket_endpoints': webapp_map.websocket_endpoints
+        }
+        
+        # Store API documentation if found
+        if webapp_map.api_documentation:
+            result.api_schema = webapp_map.api_documentation
         
         # Phase 3: SQL injection testing
         if options.get('enable_sqlmap', True) and webapp_map.endpoints:
@@ -1291,8 +1845,8 @@ class UnifiedScanner:
                             'confidence': evidence.confidence
                         })
         
-        # Generate summary
-        result.summary = self._generate_summary(result)
+        # Generate enhanced summary
+        result.summary = self._generate_enhanced_summary(result)
         
         return result
     
@@ -1319,12 +1873,19 @@ class UnifiedScanner:
                     for param in ['id', 'user', 'search', 'filter']):
                 targets.append(endpoint)
         
+        # Prioritize API endpoints
+        targets.sort(key=lambda e: 1 if e.api_calls else 0, reverse=True)
+        
         return targets
     
-    def _generate_summary(self, result: ScanResult) -> Dict[str, Any]:
-        """Generate scan summary"""
+    def _generate_enhanced_summary(self, result: ScanResult) -> Dict[str, Any]:
+        """Generate enhanced scan summary"""
         return {
             'total_endpoints': len(result.endpoints),
+            'api_endpoints': len([e for e in result.endpoints if e.api_calls]),
+            'javascript_files': len(result.javascript_analysis.get('javascript_files', [])),
+            'graphql_endpoints': len(result.javascript_analysis.get('graphql_endpoints', [])),
+            'websocket_endpoints': len(result.javascript_analysis.get('websocket_endpoints', [])),
             'open_ports': len(result.services.get('nmap', {}).get('ports', [])),
             'vulnerability_types': list(result.vulnerabilities.keys()),
             'high_risk_findings': sum(
@@ -1332,12 +1893,15 @@ class UnifiedScanner:
                 for vuln in vuln_list
                 if isinstance(vuln, dict) and vuln.get('risk_level') == 'High'
             ),
+            'client_side_vulns': list(result.javascript_analysis.get('client_side_vulns', {}).keys()),
             'idor_evidence_count': len([e for e in result.evidence if isinstance(e, IDOREvidence)]),
-            'technologies_detected': self.fingerprint.technologies
+            'technologies_detected': self.fingerprint.technologies,
+            'javascript_libraries': self.fingerprint.javascript_libraries,
+            'api_documentation_found': bool(result.api_schema)
         }
     
     def export_results(self, result: ScanResult, filename: str = "scan_results.json"):
-        """Export scan results to file"""
+        """Export enhanced scan results to file"""
         export_data = {
             'target': result.target,
             'timestamp': result.timestamp,
@@ -1348,30 +1912,42 @@ class UnifiedScanner:
                     'method': e.method,
                     'parameters': e.parameters,
                     'potential_vulns': e.potential_vulns,
-                    'auth_required': e.auth_required
+                    'auth_required': e.auth_required,
+                    'javascript_rendered': e.javascript_rendered,
+                    'dynamic_content': e.dynamic_content,
+                    'graphql': e.graphql_endpoint,
+                    'websocket': e.websocket_endpoint,
+                    'dom_xss_sinks': e.dom_xss_sinks
                 }
                 for e in result.endpoints
             ],
             'vulnerabilities': result.vulnerabilities,
             'services': result.services,
+            'javascript_analysis': result.javascript_analysis,
+            'api_schema': result.api_schema,
             'fingerprint': {
                 'product': self.fingerprint.product,
                 'version': self.fingerprint.version,
                 'cms': self.fingerprint.cms,
-                'technologies': self.fingerprint.technologies
+                'technologies': self.fingerprint.technologies,
+                'javascript_libraries': self.fingerprint.javascript_libraries,
+                'api_type': self.fingerprint.api_type,
+                'waf': self.fingerprint.waf
             }
         }
         
         with open(filename, 'w') as f:
             json.dump(export_data, f, indent=2, default=str)
         
+        logger.info(f"Results exported to {filename}")
+        
         return export_data
 
 
 # For backward compatibility
-AdaptiveLearningMapper = WebApplicationMapper  # Alias for legacy code
-EnhancedWebMapper = WebApplicationMapper  # Alias
-EndpointMapper = WebApplicationMapper  # Alias
+AdaptiveLearningMapper = WebApplicationMapper
+EnhancedWebMapper = WebApplicationMapper
+EndpointMapper = WebApplicationMapper
 
 __all__ = [
     'UnifiedScanner',
